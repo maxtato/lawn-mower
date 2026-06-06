@@ -4,17 +4,21 @@ Petit jeu de tondeuse à gazon en **vue de dessus**, en HTML5 Canvas + JavaScrip
 
 ## But du jeu
 
-Tu tonds la pelouse d'un **vrai jardin de pavillon** : maison 🏠, garage,
-allée pavée, terrasse, clôture, massifs et arbres. **Recouvre toute la
-pelouse** en laissant une **traînée tondue** derrière la tondeuse… sans
-tout casser :
+Le décor est une **image de vrai jardin de pavillon** (`assets/garden.png`) :
+maison 🏠, garage, allée pavée, terrasse, clôture, massifs et arbres. **Recouvre
+toute la pelouse** : la tonte révèle une **herbe vert clair** derrière la
+tondeuse… sans tout casser :
 
-- 🌱 **Pelouse** → la tondeuse laisse une traînée continue (largeur de la lame) ; il faut couvrir toute la pelouse autour des bâtiments
-- 🏠 **Maison / garage / clôture** → obstacles solides à contourner
+- 🌱 **Pelouse** → la tondeuse laisse une traînée vert clair (largeur de la lame) ; couvre toute l'herbe autour du décor
+- 🏠 **Maison / garage / clôture / bac** → obstacles solides à contourner
 - 🛣️ **Allée pavée / terrasse** → se traversent librement (rien à tondre)
-- 🌸 **Massifs de fleurs** → ne roule **PAS** dessus (−30 pts, fleurs détruites)
+- 🌸 **Massifs de fleurs** → ne roule **PAS** dessus (−30 pts)
 - 🌳 **Arbres** / 🪨 **rochers** → obstacles solides : les percuter **vite** endommage la tondeuse (mais elle est robuste !)
 - ❤️ La tondeuse a une **barre de vie** : à 0, c'est game over
+
+> ℹ️ Dépose ton image dans `assets/garden.png` (voir `assets/README.md`). Sans
+> elle, le jeu tourne avec un fond vert de repli et les obstacles repérés. La
+> résolution interne s'adapte automatiquement à la taille de l'image.
 
 À la fin, une **note sur 3 étoiles** récompense la rapidité et les fleurs épargnées.
 
