@@ -1,51 +1,56 @@
 "use strict";
 
 // ============================================================
-//  Mow & Go — tondeuse en vue de dessus
-//  Fond : image d'un vrai jardin (assets/garden.png).
-//  La tonte révèle une pelouse vert clair derrière la tondeuse.
+//  Mow & Go — tondeuse en vue de dessus, jardin défilant
+//  Le monde est plus grand que l'écran : la caméra suit la
+//  tondeuse (zoom + défilement). Décor dessiné, varié.
 // ============================================================
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+canvas.width = 960;
+canvas.height = 720;
 
-// Résolution interne (mise à jour à la taille native de l'image)
-let W = 1456, H = 1088;
-canvas.width = W;
-canvas.height = H;
+// --- Monde & caméra ---
+const WORLD_W = 1800, WORLD_H = 1350;
+const ZOOM = 2.0;                 // zoom : on ne voit qu'un bout du jardin
+const viewW = canvas.width / ZOOM;
+const viewH = canvas.height / ZOOM;
+const cam = { x: 0, y: 0 };
 
-// --- Image de fond ---
-const bg = new Image();
-let bgReady = false;
-
-// --- Calques hors-écran ---
-const maskCanvas = document.createElement("canvas");   // pelouse vert clair (zones tondables)
-const maskCtx = maskCanvas.getContext("2d");
-const revealCanvas = document.createElement("canvas"); // traînée révélée (disques)
-const revealCtx = revealCanvas.getContext("2d");
-const mowCanvas = document.createElement("canvas");     // composite mask ∩ reveal (par frame)
+// --- Calques hors-écran (taille du monde) ---
+function makeLayer() {
+  const c = document.createElement("canvas");
+  c.width = WORLD_W; c.height = WORLD_H;
+  return c;
+}
+const grassCanvas = makeLayer();  // pelouse non tondue (statique)
+const grassCtx = grassCanvas.getContext("2d");
+const decorCanvas = makeLayer();  // décor (arbres, fleurs, maison…) statique
+const decorCtx = decorCanvas.getContext("2d");
+const mowCanvas = makeLayer();    // traînée tondue (vert clair)
 const mowCtx = mowCanvas.getContext("2d");
 
 // --- Tonte / couverture ---
-const CELL = 10;          // finesse de la grille de couverture
-let CW = 0, CH = 0;
-let cov;                  // 0 = à tondre, 1 = tondu, 2 = non tondable
+const CELL = 10;
+const CW = Math.ceil(WORLD_W / CELL);
+const CH = Math.ceil(WORLD_H / CELL);
+let cov;                          // 0 = à tondre, 1 = tondu, 2 = non tondable
 let mowableTotal = 0, mowedCount = 0;
-let DECK = 32;            // demi-largeur de coupe (px), recalculée selon la résolution
+const DECK = 24;                  // demi-largeur de coupe (monde)
 
-// --- Géométrie du jardin (obstacles & zones), en pixels ---
-let bounds = { x0: 0, y0: 0, x1: W, y1: H }; // intérieur de la clôture
-let solids = [];   // bloquent le déplacement (+ dégâts si choc rapide)
-let paved = [];    // carrossables, non tondables (allée, terrasse)
-let flowers = [];  // massifs : non tondables + malus si on roule dessus
+// --- Géométrie ---
+const bounds = { x0: 44, y0: 44, x1: WORLD_W - 44, y1: WORLD_H - 44 };
+let solids = [];   // bloquent + dégâts
+let noMow = [];    // non tondable (tout ce qui n'est pas pelouse)
+let beds = [];     // massifs / potager : non tondable + malus
 
-// --- État global ---
+// --- État ---
 let mower, keys, state;
 let score = 0, flowersDestroyed = 0, flowerCd = 0;
 let startTime = 0, elapsed = 0, damageCooldown = 0;
 let prevX = 0, prevY = 0;
 
-// HUD
 const el = {
   mowed: document.getElementById("mowed"),
   score: document.getElementById("score"),
@@ -59,87 +64,335 @@ const el = {
 };
 
 // ------------------------------------------------------------
-//  Géométrie : repérage des obstacles (en fractions de l'image,
-//  donc indépendant de la résolution).
+//  Générateur pseudo-aléatoire déterministe (décor stable)
 // ------------------------------------------------------------
-function buildGeometry() {
-  const R = (x0, y0, x1, y1) => ({ k: "r", x: x0 * W, y: y0 * H, w: (x1 - x0) * W, h: (y1 - y0) * H });
-  const C = (cx, cy, r) => ({ k: "c", cx: cx * W, cy: cy * H, r: r * W });
-
-  bounds = { x0: 0.030 * W, y0: 0.035 * H, x1: 0.970 * W, y1: 0.965 * H };
-
-  // Obstacles solides
-  solids = [
-    R(0.555, 0.020, 0.975, 0.400), // maison (murs + toit)
-    R(0.815, 0.375, 0.975, 0.470), // garage
-    C(0.115, 0.135, 0.085),        // grand arbre haut-gauche
-    C(0.115, 0.585, 0.095),        // grand arbre milieu-gauche
-    C(0.090, 0.840, 0.050),        // arbre bas-gauche
-    C(0.735, 0.630, 0.045),        // arbuste pelouse droite
-    R(0.150, 0.720, 0.275, 0.900), // bac en bois (composteur)
-    C(0.335, 0.440, 0.040),        // rochers centre 1
-    C(0.430, 0.585, 0.040),        // rochers centre 2
-    C(0.490, 0.225, 0.045)         // table de la terrasse
-  ];
-
-  // Zones pavées (carrossables, rien à tondre)
-  paved = [
-    R(0.400, 0.145, 0.560, 0.335), // terrasse
-    R(0.800, 0.455, 0.955, 0.965), // allée
-    R(0.620, 0.440, 0.790, 0.500)  // pas japonais devant la porte
-  ];
-
-  // Massifs de fleurs (à éviter)
-  flowers = [
-    R(0.270, 0.025, 0.560, 0.155), // massif le long de la clôture haute
-    R(0.030, 0.300, 0.170, 0.700), // plate-bande gauche
-    R(0.150, 0.660, 0.320, 0.930), // massif autour du bac (bas-gauche)
-    R(0.555, 0.335, 0.800, 0.470), // massif devant la maison
-    R(0.575, 0.650, 0.730, 0.920), // massif bas-centre
-    R(0.380, 0.295, 0.470, 0.380)  // buissons à gauche de la terrasse
-  ];
-
-  DECK = Math.round(0.022 * W);
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-// --- Tests géométriques ---
+// ------------------------------------------------------------
+//  Formes (collision + couverture)
+// ------------------------------------------------------------
+function R(x, y, w, h) { return { k: "r", x, y, w, h }; }
+function C(cx, cy, r) { return { k: "c", cx, cy, r }; }
+function E(cx, cy, rx, ry) { return { k: "e", cx, cy, rx, ry }; }
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
-function circleRect(cx, cy, r, s) {
-  const nx = clamp(cx, s.x, s.x + s.w), ny = clamp(cy, s.y, s.y + s.h);
-  const dx = cx - nx, dy = cy - ny;
-  return dx * dx + dy * dy <= r * r;
-}
-function circleCircle(cx, cy, r, s) {
-  const dx = cx - s.cx, dy = cy - s.cy, rr = r + s.r;
-  return dx * dx + dy * dy <= rr * rr;
-}
+
 function pointIn(x, y, s) {
-  return s.k === "r"
-    ? (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h)
-    : ((x - s.cx) ** 2 + (y - s.cy) ** 2 <= s.r * s.r);
+  if (s.k === "r") return x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h;
+  if (s.k === "c") return (x - s.cx) ** 2 + (y - s.cy) ** 2 <= s.r * s.r;
+  return ((x - s.cx) / s.rx) ** 2 + ((y - s.cy) / s.ry) ** 2 <= 1;
 }
 function inAny(x, y, list) { for (const s of list) if (pointIn(x, y, s)) return true; return false; }
 
+function collideShape(cx, cy, r, s) {
+  if (s.k === "r") {
+    const nx = clamp(cx, s.x, s.x + s.w), ny = clamp(cy, s.y, s.y + s.h);
+    return (cx - nx) ** 2 + (cy - ny) ** 2 <= r * r;
+  }
+  if (s.k === "c") return (cx - s.cx) ** 2 + (cy - s.cy) ** 2 <= (r + s.r) ** 2;
+  return ((cx - s.cx) / (s.rx + r)) ** 2 + ((cy - s.cy) / (s.ry + r)) ** 2 <= 1;
+}
 function hitsSolid(cx, cy, r) {
   if (cx - r < bounds.x0 || cx + r > bounds.x1 || cy - r < bounds.y0 || cy + r > bounds.y1) return true;
-  for (const s of solids) {
-    if (s.k === "r" ? circleRect(cx, cy, r, s) : circleCircle(cx, cy, r, s)) return true;
-  }
+  for (const s of solids) if (collideShape(cx, cy, r, s)) return true;
   return false;
 }
 function isMowable(x, y) {
   if (x < bounds.x0 || x > bounds.x1 || y < bounds.y0 || y > bounds.y1) return false;
-  if (inAny(x, y, solids) || inAny(x, y, paved) || inAny(x, y, flowers)) return false;
-  return true;
+  return !inAny(x, y, noMow);
 }
-function inFlower(x, y) { return inAny(x, y, flowers); }
+function inBed(x, y) { return inAny(x, y, beds); }
+
+// ============================================================
+//  Construction du jardin
+// ============================================================
+function buildWorld() {
+  solids = []; noMow = []; beds = [];
+  buildGrass();
+  decorCtx.clearRect(0, 0, WORLD_W, WORLD_H);
+  buildDecor();
+  buildCoverage();
+}
+
+// --- Pelouse non tondue (texture) ---
+function buildGrass() {
+  const g = grassCtx;
+  // dégradé léger
+  g.fillStyle = "#3c7a28";
+  g.fillRect(0, 0, WORLD_W, WORLD_H);
+  const rnd = mulberry32(99);
+  // taches plus claires / plus foncées
+  for (let i = 0; i < 2600; i++) {
+    const x = rnd() * WORLD_W, y = rnd() * WORLD_H, r = 6 + rnd() * 16;
+    g.fillStyle = rnd() > 0.5 ? "rgba(80,150,50,0.10)" : "rgba(20,55,15,0.10)";
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  // brins
+  g.strokeStyle = "rgba(20,55,14,0.5)";
+  g.lineWidth = 1.4;
+  for (let i = 0; i < 5200; i++) {
+    const x = rnd() * WORLD_W, y = rnd() * WORLD_H;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x - 2, y - 9); g.stroke();
+  }
+}
+
+// --- Décor : enregistre les formes ET les dessine ---
+function addSolid(s) { solids.push(s); noMow.push(s); }
+function addPaved(s) { noMow.push(s); }            // carrossable, non tondable
+function addBed(s) { noMow.push(s); beds.push(s); } // massif : non tondable + malus
+function addCanopy(s) { noMow.push(s); }            // sous les arbres : non tondable
+
+function buildDecor() {
+  const g = decorCtx;
+
+  // ----- Zones pavées -----
+  const terrace = R(820, 130, 320, 280);
+  const drive = R(1545, 560, 195, WORLD_H - 44 - 560);
+  const path = R(1190, 430, 130, 110);
+  for (const p of [terrace, drive, path]) { addPaved(p); drawPaved(g, p); }
+
+  // ----- Maison + garage -----
+  const house = R(1180, 70, 575, 360);
+  const garage = R(1520, 430, 235, 150);
+  addSolid(house); addSolid(garage);
+  drawHouse(g, house);
+  drawGarage(g, garage);
+
+  // ----- Mare -----
+  const pond = E(560, 1010, 195, 130);
+  addSolid(pond);
+  drawPond(g, pond);
+
+  // ----- Potager -----
+  const veg = R(120, 1060, 270, 230);
+  addBed(veg);
+  drawVeggie(g, veg);
+
+  // ----- Massifs de fleurs (variés) -----
+  const flowerBeds = [
+    R(520, 60, 620, 92),     // bande haute
+    R(60, 360, 150, 560),    // plate-bande gauche
+    R(700, 430, 120, 110),   // près de la terrasse
+    R(1320, 440, 220, 130),  // devant la maison
+    R(900, 1090, 300, 210)   // bas-centre
+  ];
+  for (const b of flowerBeds) { addBed(b); drawFlowerBed(g, b); }
+
+  // ----- Arbres variés (canopée = non tondable, tronc = solide) -----
+  const trees = [
+    { type: "oak", x: 250, y: 260, r: 150 },
+    { type: "oak", x: 980, y: 1170, r: 140 },
+    { type: "pine", x: 430, y: 660, r: 120 },
+    { type: "pine", x: 1410, y: 1180, r: 115 },
+    { type: "birch", x: 810, y: 760, r: 95 },
+    { type: "round", x: 1180, y: 900, r: 85 }
+  ];
+  for (const t of trees) {
+    addCanopy(C(t.x, t.y, t.r));
+    addSolid(C(t.x, t.y, Math.max(26, t.r * 0.34))); // tronc/base
+  }
+  // (dessinés après les massifs pour passer devant)
+  for (const t of trees) drawTree(g, t);
+
+  // ----- Banc, rochers, pots -----
+  const bench = R(540, 1180, 170, 46);
+  addSolid(bench); drawBench(g, bench);
+
+  for (const [x, y, r] of [[720, 560, 30], [905, 640, 24]]) {
+    addSolid(C(x, y, r)); drawRock(g, x, y, r);
+  }
+  for (const [x, y] of [[800, 150], [1130, 150]]) {
+    addSolid(C(x, y, 22)); drawPot(g, x, y);
+  }
+
+  // ----- Clôture sur tout le pourtour -----
+  drawFence(g);
+}
 
 // ------------------------------------------------------------
-//  Couverture (grille fine de la pelouse à tondre)
+//  Dessins d'éléments
+// ------------------------------------------------------------
+function drawPaved(g, p) {
+  g.fillStyle = "#bdb6a8";
+  g.fillRect(p.x, p.y, p.w, p.h);
+  g.strokeStyle = "rgba(120,114,103,0.65)";
+  g.lineWidth = 1.5;
+  for (let x = p.x; x <= p.x + p.w; x += 28) { g.beginPath(); g.moveTo(x, p.y); g.lineTo(x, p.y + p.h); g.stroke(); }
+  for (let y = p.y; y <= p.y + p.h; y += 28) { g.beginPath(); g.moveTo(p.x, y); g.lineTo(p.x + p.w, y); g.stroke(); }
+}
+
+function drawHouse(g, h) {
+  g.fillStyle = "#ecdcb6"; g.fillRect(h.x, h.y, h.w, h.h);
+  g.strokeStyle = "#b8a684"; g.lineWidth = 3; g.strokeRect(h.x + 1.5, h.y + 1.5, h.w - 3, h.h - 3);
+  const roofH = 130;
+  g.fillStyle = "#9c3b2e"; g.fillRect(h.x - 8, h.y - 8, h.w + 16, roofH);
+  g.fillStyle = "#7e2e23"; g.fillRect(h.x - 8, h.y - 8, h.w + 16, 10);
+  // porte
+  g.fillStyle = "#6b4a2a";
+  const dw = 46, dh = 78;
+  g.fillRect(h.x + h.w / 2 - dw / 2, h.y + h.h - dh, dw, dh);
+  g.fillStyle = "#d9b94e";
+  g.beginPath(); g.arc(h.x + h.w / 2 + dw / 2 - 9, h.y + h.h - dh / 2, 4, 0, Math.PI * 2); g.fill();
+  // fenêtres
+  const wy = h.y + roofH + 26;
+  for (const wx of [h.x + 40, h.x + h.w - 40 - 56]) {
+    g.fillStyle = "#9fd6ea"; g.fillRect(wx, wy, 56, 46);
+    g.strokeStyle = "#fff"; g.lineWidth = 4; g.strokeRect(wx, wy, 56, 46);
+    g.beginPath(); g.moveTo(wx + 28, wy); g.lineTo(wx + 28, wy + 46);
+    g.moveTo(wx, wy + 23); g.lineTo(wx + 56, wy + 23); g.stroke();
+  }
+}
+
+function drawGarage(g, r) {
+  g.fillStyle = "#dccfb6"; g.fillRect(r.x, r.y, r.w, r.h);
+  g.fillStyle = "#8a4034"; g.fillRect(r.x - 6, r.y - 6, r.w + 12, 16);
+  const px = r.x + 16, py = r.y + 30, pw = r.w - 32, ph = r.h - 44;
+  g.fillStyle = "#9aa0a6"; g.fillRect(px, py, pw, ph);
+  g.strokeStyle = "#7d838a"; g.lineWidth = 2;
+  for (let y = py + 14; y < py + ph; y += 16) { g.beginPath(); g.moveTo(px, y); g.lineTo(px + pw, y); g.stroke(); }
+  g.strokeRect(px, py, pw, ph);
+}
+
+function drawPond(g, e) {
+  // bordure de pierres
+  g.fillStyle = "#9a9488";
+  g.beginPath(); g.ellipse(e.cx, e.cy, e.rx + 10, e.ry + 10, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#2f7fb0";
+  g.beginPath(); g.ellipse(e.cx, e.cy, e.rx, e.ry, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "rgba(255,255,255,0.18)";
+  g.beginPath(); g.ellipse(e.cx - e.rx * 0.3, e.cy - e.ry * 0.3, e.rx * 0.45, e.ry * 0.35, 0, 0, Math.PI * 2); g.fill();
+  // nénuphars
+  g.fillStyle = "#2f8f43";
+  for (const [dx, dy] of [[-60, 30], [40, -20], [80, 40]]) {
+    g.beginPath(); g.arc(e.cx + dx, e.cy + dy, 16, 0, Math.PI * 2); g.fill();
+  }
+}
+
+function drawVeggie(g, r) {
+  g.fillStyle = "#6b4a2a"; g.fillRect(r.x, r.y, r.w, r.h);
+  g.strokeStyle = "#553a20"; g.lineWidth = 3;
+  for (let y = r.y + 18; y < r.y + r.h; y += 30) { g.beginPath(); g.moveTo(r.x + 6, y); g.lineTo(r.x + r.w - 6, y); g.stroke(); }
+  const rnd = mulberry32(7);
+  for (let y = r.y + 18; y < r.y + r.h - 8; y += 30) {
+    for (let x = r.x + 22; x < r.x + r.w - 12; x += 34) {
+      g.fillStyle = "#3f9b3a";
+      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill();
+      if (rnd() > 0.6) { // quelques légumes colorés
+        g.fillStyle = rnd() > 0.5 ? "#e0533d" : "#e8a93f";
+        g.beginPath(); g.arc(x + 3, y - 2, 3.2, 0, Math.PI * 2); g.fill();
+      }
+    }
+  }
+}
+
+const FLOWER_COLORS = ["#e0533d", "#e85d9e", "#f1c232", "#b06ad6", "#ffffff", "#ff8c42"];
+function drawFlower(g, x, y, color, s) {
+  g.fillStyle = color;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    g.beginPath(); g.arc(x + Math.cos(a) * 3 * s, y + Math.sin(a) * 3 * s, 2.1 * s, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = "#ffd23f";
+  g.beginPath(); g.arc(x, y, 2.1 * s, 0, Math.PI * 2); g.fill();
+}
+function drawShrub(g, x, y, r) {
+  g.fillStyle = "#2f7d2c";
+  for (const [dx, dy, rr] of [[0, 0, r], [-r * 0.6, r * 0.2, r * 0.7], [r * 0.6, r * 0.2, r * 0.7]]) {
+    g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = "rgba(120,200,90,0.35)";
+  g.beginPath(); g.arc(x - r * 0.2, y - r * 0.3, r * 0.5, 0, Math.PI * 2); g.fill();
+}
+function drawFlowerBed(g, b) {
+  // terre
+  g.fillStyle = "#5a3d22";
+  roundRectPath(g, b.x, b.y, b.w, b.h, 10); g.fill();
+  const rnd = mulberry32(Math.floor(b.x * 13 + b.y));
+  // buissons + fleurs
+  const n = Math.floor((b.w * b.h) / 1700);
+  for (let i = 0; i < n; i++) {
+    const x = b.x + 8 + rnd() * (b.w - 16);
+    const y = b.y + 8 + rnd() * (b.h - 16);
+    if (rnd() > 0.55) drawShrub(g, x, y, 8 + rnd() * 8);
+    else drawFlower(g, x, y, FLOWER_COLORS[(rnd() * FLOWER_COLORS.length) | 0], 1 + rnd() * 1.2);
+  }
+}
+
+function drawTree(g, t) {
+  const { x, y, r, type } = t;
+  // ombre portée
+  g.fillStyle = "rgba(0,0,0,0.18)";
+  g.beginPath(); g.ellipse(x + r * 0.18, y + r * 0.22, r * 0.95, r * 0.6, 0, 0, Math.PI * 2); g.fill();
+  if (type === "pine") {
+    g.fillStyle = "#6b4a2a"; g.fillRect(x - 8, y, 16, r * 0.5);
+    for (let i = 0; i < 3; i++) {
+      const yy = y - r * 0.7 + i * r * 0.45, w = r * (0.9 - i * 0.22);
+      g.fillStyle = i === 0 ? "#1f5a1e" : "#256b23";
+      g.beginPath(); g.moveTo(x, yy - r * 0.5); g.lineTo(x - w, yy + r * 0.2); g.lineTo(x + w, yy + r * 0.2); g.closePath(); g.fill();
+    }
+  } else if (type === "birch") {
+    g.fillStyle = "#e8e8e0"; g.fillRect(x - 6, y - r * 0.1, 12, r * 0.8);
+    g.fillStyle = "#444"; for (let i = 0; i < 4; i++) g.fillRect(x - 6, y + i * (r * 0.18), 12, 2);
+    g.fillStyle = "#7cbf3f";
+    for (const [dx, dy, rr] of [[0, -r * 0.4, r * 0.6], [-r * 0.4, -r * 0.1, r * 0.45], [r * 0.4, -r * 0.15, r * 0.45]]) {
+      g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill();
+    }
+  } else { // chêne / arbre rond touffu
+    g.fillStyle = "#5a3a1e"; g.fillRect(x - 10, y, 20, r * 0.4);
+    const base = type === "oak" ? "#2f7d2c" : "#3f9b3a";
+    const clusters = [[0, -r * 0.25, r * 0.7], [-r * 0.55, 0, r * 0.55], [r * 0.55, 0, r * 0.55], [-r * 0.25, -r * 0.6, r * 0.5], [r * 0.3, -r * 0.55, r * 0.5]];
+    g.fillStyle = base;
+    for (const [dx, dy, rr] of clusters) { g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = "rgba(150,210,90,0.30)";
+    for (const [dx, dy, rr] of clusters) { g.beginPath(); g.arc(x + dx - rr * 0.25, y + dy - rr * 0.3, rr * 0.55, 0, Math.PI * 2); g.fill(); }
+  }
+}
+
+function drawBench(g, b) {
+  g.fillStyle = "#8a5a32"; g.fillRect(b.x, b.y, b.w, b.h);
+  g.fillStyle = "#6e4626"; g.fillRect(b.x, b.y, b.w, 8);
+  for (let x = b.x + 8; x < b.x + b.w; x += 22) g.fillRect(x, b.y + b.h - 10, 6, 10);
+}
+function drawRock(g, x, y, r) {
+  g.fillStyle = "#8a8f96";
+  g.beginPath(); g.ellipse(x, y, r, r * 0.8, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#a9aeb4";
+  g.beginPath(); g.ellipse(x - r * 0.2, y - r * 0.2, r * 0.55, r * 0.4, 0, 0, Math.PI * 2); g.fill();
+}
+function drawPot(g, x, y) {
+  g.fillStyle = "#b5642f"; g.beginPath(); g.moveTo(x - 16, y - 4); g.lineTo(x + 16, y - 4); g.lineTo(x + 12, y + 16); g.lineTo(x - 12, y + 16); g.closePath(); g.fill();
+  drawShrub(g, x, y - 10, 12);
+}
+
+function drawFence(g) {
+  const m = 22;
+  g.strokeStyle = "#8a5a32"; g.lineWidth = 10;
+  g.strokeRect(m, m, WORLD_W - 2 * m, WORLD_H - 2 * m);
+  g.fillStyle = "#6e4626";
+  for (let x = m; x <= WORLD_W - m; x += 60) { g.fillRect(x - 5, m - 12, 10, 24); g.fillRect(x - 5, WORLD_H - m - 12, 10, 24); }
+  for (let y = m; y <= WORLD_H - m; y += 60) { g.fillRect(m - 5, y - 12, 10, 24); g.fillRect(WORLD_W - m - 5, y - 12, 10, 24); }
+}
+
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+// ------------------------------------------------------------
+//  Couverture
 // ------------------------------------------------------------
 function buildCoverage() {
-  CW = Math.ceil(W / CELL);
-  CH = Math.ceil(H / CELL);
   cov = new Uint8Array(CW * CH);
   mowableTotal = 0;
   for (let r = 0; r < CH; r++) {
@@ -152,82 +405,31 @@ function buildCoverage() {
 }
 
 // ------------------------------------------------------------
-//  Masque de pelouse tondue (vert clair) : uniquement sur l'herbe
+//  Partie
 // ------------------------------------------------------------
-function buildMask() {
-  maskCanvas.width = W; maskCanvas.height = H;
-  revealCanvas.width = W; revealCanvas.height = H;
-  mowCanvas.width = W; mowCanvas.height = H;
-
-  maskCtx.clearRect(0, 0, W, H);
-  maskCtx.fillStyle = "#aee36a"; // vert clair « fraîchement tondu »
-  maskCtx.fillRect(bounds.x0, bounds.y0, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
-
-  // On retire les zones non tondables du masque
-  maskCtx.globalCompositeOperation = "destination-out";
-  for (const s of [...solids, ...paved, ...flowers]) fillShape(maskCtx, s);
-  maskCtx.globalCompositeOperation = "source-over";
-}
-
-function fillShape(c, s) {
-  c.beginPath();
-  if (s.k === "r") c.rect(s.x, s.y, s.w, s.h);
-  else c.arc(s.cx, s.cy, s.r, 0, Math.PI * 2);
-  c.fill();
-}
-
-// ------------------------------------------------------------
-//  (Re)construction complète à une résolution donnée
-// ------------------------------------------------------------
-function buildAll() {
-  canvas.width = W;
-  canvas.height = H;
-  buildGeometry();
-  buildCoverage();
-  buildMask();
-}
-
 function makeMower() {
   return {
-    x: 0.32 * W, y: 0.30 * H,
-    angle: 0, speed: 0,
-    maxSpeed: 0.22 * W,
-    accel: 0.85 * W,
-    friction: 0.75 * W,
-    radius: 0.016 * W,
-    health: 100
+    x: 640, y: 560, angle: 0, speed: 0,
+    maxSpeed: 190, accel: 750, friction: 650,
+    radius: 17, health: 100
   };
 }
 
-// ------------------------------------------------------------
-//  Réinitialisation d'une partie
-// ------------------------------------------------------------
 function reset() {
   mower = makeMower();
   keys = {};
-  score = 0;
-  mowedCount = 0;
-  flowersDestroyed = 0;
-  flowerCd = 0;
-  damageCooldown = 0;
-  elapsed = 0;
-  startTime = performance.now();
+  score = 0; mowedCount = 0; flowersDestroyed = 0; flowerCd = 0;
+  damageCooldown = 0; elapsed = 0; startTime = performance.now();
   state = "playing";
-
-  revealCtx.clearRect(0, 0, W, H);
-  prevX = mower.x;
-  prevY = mower.y;
+  mowCtx.clearRect(0, 0, WORLD_W, WORLD_H);
+  prevX = mower.x; prevY = mower.y;
   stampAt(mower.x, mower.y);
-
   hideOverlay();
 }
 
-// Peint un coup de tondeuse (disque révélé) + met à jour la couverture.
 function stampAt(x, y) {
-  revealCtx.fillStyle = "#fff";
-  revealCtx.beginPath();
-  revealCtx.arc(x, y, DECK, 0, Math.PI * 2);
-  revealCtx.fill();
+  mowCtx.fillStyle = "#a8e36a";
+  mowCtx.beginPath(); mowCtx.arc(x, y, DECK, 0, Math.PI * 2); mowCtx.fill();
 
   const minc = Math.max(0, Math.floor((x - DECK) / CELL));
   const maxc = Math.min(CW - 1, Math.floor((x + DECK) / CELL));
@@ -238,20 +440,15 @@ function stampAt(x, y) {
     for (let c = minc; c <= maxc; c++) {
       const idx = r * CW + c;
       if (cov[idx] !== 0) continue;
-      const dx = (c + 0.5) * CELL - x;
-      const dy = (r + 0.5) * CELL - y;
+      const dx = (c + 0.5) * CELL - x, dy = (r + 0.5) * CELL - y;
       if (dx * dx + dy * dy <= R2) { cov[idx] = 1; mowedCount++; score += 1; }
     }
   }
 }
-
 function stampTrail(x0, y0, x1, y1) {
   const d = Math.hypot(x1 - x0, y1 - y0);
   const steps = Math.max(1, Math.ceil(d / (DECK * 0.5)));
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    stampAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
-  }
+  for (let i = 1; i <= steps; i++) { const t = i / steps; stampAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t); }
 }
 
 // ------------------------------------------------------------
@@ -260,15 +457,13 @@ function stampTrail(x0, y0, x1, y1) {
 document.addEventListener("keydown", (e) => {
   keys[e.key.toLowerCase()] = true;
   if (e.key.toLowerCase() === "r") reset();
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase()))
-    e.preventDefault();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
 });
 document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
-
 el.overlayBtn.addEventListener("click", reset);
 
 // ------------------------------------------------------------
-//  Joystick virtuel DYNAMIQUE (apparaît sous le doigt) + Turbo
+//  Joystick + Turbo + Plein écran (inchangé)
 // ------------------------------------------------------------
 const stageEl = document.getElementById("stage");
 const joyEl = document.getElementById("joystick");
@@ -280,7 +475,6 @@ const ctrlEl = document.getElementById("controls");
 
 const joy = { active: false, id: null, baseX: 0, baseY: 0, dx: 0, dy: 0, mag: 0, maxR: 55 };
 let boostHeld = false;
-
 const isTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
 if (isTouch) document.body.classList.add("touch");
 
@@ -302,32 +496,20 @@ function joyMove(clientX, clientY) {
 }
 function joyEnd() {
   joy.active = false; joy.id = null; joy.dx = joy.dy = joy.mag = 0;
-  knobEl.style.transform = "translate(0px, 0px)";
-  joyEl.classList.remove("visible");
+  knobEl.style.transform = "translate(0px, 0px)"; joyEl.classList.remove("visible");
 }
-
 stageEl.addEventListener("touchstart", (e) => {
   if (joy.active) return;
-  const t = e.changedTouches[0];
-  e.preventDefault();
+  const t = e.changedTouches[0]; e.preventDefault();
   joyStart(t.clientX, t.clientY, t.identifier);
 }, { passive: false });
 window.addEventListener("touchmove", (e) => {
   if (!joy.active) return;
-  for (const t of e.changedTouches) {
-    if (t.identifier === joy.id) { e.preventDefault(); joyMove(t.clientX, t.clientY); break; }
-  }
+  for (const t of e.changedTouches) if (t.identifier === joy.id) { e.preventDefault(); joyMove(t.clientX, t.clientY); break; }
 }, { passive: false });
-window.addEventListener("touchend", (e) => {
-  for (const t of e.changedTouches) if (t.identifier === joy.id) { joyEnd(); break; }
-});
+window.addEventListener("touchend", (e) => { for (const t of e.changedTouches) if (t.identifier === joy.id) { joyEnd(); break; } });
 window.addEventListener("touchcancel", joyEnd);
-
-stageEl.addEventListener("mousedown", (e) => {
-  if (e.target === boostBtn) return;
-  e.preventDefault();
-  joyStart(e.clientX, e.clientY, "mouse");
-});
+stageEl.addEventListener("mousedown", (e) => { if (e.target === boostBtn) return; e.preventDefault(); joyStart(e.clientX, e.clientY, "mouse"); });
 window.addEventListener("mousemove", (e) => { if (joy.active && joy.id === "mouse") joyMove(e.clientX, e.clientY); });
 window.addEventListener("mouseup", () => { if (joy.id === "mouse") joyEnd(); });
 
@@ -339,19 +521,15 @@ boostBtn.addEventListener("touchcancel", boostOff);
 boostBtn.addEventListener("mousedown", boostOn);
 window.addEventListener("mouseup", boostOff);
 
-// --- Plein écran + mise à l'échelle du canvas ---
 function fitCanvas() {
   const fs = document.fullscreenElement === wrapper;
-  if (!document.body.classList.contains("touch") && !fs) {
-    canvas.style.width = ""; canvas.style.height = ""; return;
-  }
+  if (!document.body.classList.contains("touch") && !fs) { canvas.style.width = ""; canvas.style.height = ""; return; }
   const availW = window.innerWidth;
   const availH = window.innerHeight - hudEl.offsetHeight - ctrlEl.offsetHeight;
   const scale = Math.min(availW / canvas.width, availH / canvas.height);
   canvas.style.width = Math.floor(canvas.width * scale) + "px";
   canvas.style.height = Math.floor(canvas.height * scale) + "px";
 }
-
 const wrapper = document.getElementById("game-wrapper");
 if (!(wrapper.requestFullscreen)) fsBtn.style.display = "none";
 fsBtn.addEventListener("click", () => {
@@ -362,9 +540,6 @@ document.addEventListener("fullscreenchange", () => setTimeout(fitCanvas, 60));
 window.addEventListener("resize", fitCanvas);
 window.addEventListener("orientationchange", () => setTimeout(fitCanvas, 200));
 
-// ------------------------------------------------------------
-//  Direction d'entrée
-// ------------------------------------------------------------
 function dirFromKeys() {
   let dx = 0, dy = 0;
   if (keys["arrowup"] || keys["z"] || keys["w"]) dy -= 1;
@@ -379,14 +554,9 @@ function getInputVector() {
     return { dx: joy.dx / len, dy: joy.dy / len, mag: joy.mag, active: true };
   }
   const { dx, dy } = dirFromKeys();
-  if (dx !== 0 || dy !== 0) {
-    const len = Math.hypot(dx, dy);
-    return { dx: dx / len, dy: dy / len, mag: 1, active: true };
-  }
+  if (dx !== 0 || dy !== 0) { const len = Math.hypot(dx, dy); return { dx: dx / len, dy: dy / len, mag: 1, active: true }; }
   return { dx: 0, dy: 0, mag: 0, active: false };
 }
-
-function collides(px, py, radius) { return hitsSolid(px, py, radius); }
 
 // ------------------------------------------------------------
 //  Mise à jour
@@ -411,110 +581,71 @@ function update(dt) {
   const vx = Math.cos(mower.angle) * mower.speed;
   const vy = Math.sin(mower.angle) * mower.speed;
   let hitWall = false;
+  if (!hitsSolid(mower.x + vx * dt, mower.y, mower.radius)) mower.x += vx * dt; else hitWall = true;
+  if (!hitsSolid(mower.x, mower.y + vy * dt, mower.radius)) mower.y += vy * dt; else hitWall = true;
 
-  if (!collides(mower.x + vx * dt, mower.y, mower.radius)) mower.x += vx * dt; else hitWall = true;
-  if (!collides(mower.x, mower.y + vy * dt, mower.radius)) mower.y += vy * dt; else hitWall = true;
-
-  // Dégâts (tondeuse robuste : peu de dégâts, seuls les chocs rapides comptent)
   if (damageCooldown > 0) damageCooldown -= dt;
-  if (hitWall && mower.speed > 0.11 * W && damageCooldown <= 0) {
+  if (hitWall && mower.speed > 120 && damageCooldown <= 0) {
     const dmg = Math.round(3 + (mower.speed / mower.maxSpeed) * 6);
     mower.health = Math.max(0, mower.health - dmg);
     score = Math.max(0, score - 5);
-    damageCooldown = 0.6;
-    mower.speed *= 0.2;
+    damageCooldown = 0.6; mower.speed *= 0.2;
     if (mower.health <= 0) endGame(false);
   }
 
-  // Tonte : traînée entre l'ancienne et la nouvelle position
   if (mower.x !== prevX || mower.y !== prevY) {
     stampTrail(prevX, prevY, mower.x, mower.y);
     prevX = mower.x; prevY = mower.y;
   }
 
-  // Massif de fleurs abîmé
   if (flowerCd > 0) flowerCd -= dt;
-  if (inFlower(mower.x, mower.y) && flowerCd <= 0) {
-    flowersDestroyed++;
-    score = Math.max(0, score - 30);
-    flowerCd = 0.5;
+  if (inBed(mower.x, mower.y) && flowerCd <= 0) {
+    flowersDestroyed++; score = Math.max(0, score - 30); flowerCd = 0.5;
   }
 
   if (mowableTotal > 0 && mowedCount >= mowableTotal * 0.97) endGame(true);
+
+  // Caméra : suit la tondeuse, clampée aux bords du monde
+  cam.x = clamp(mower.x - viewW / 2, 0, WORLD_W - viewW);
+  cam.y = clamp(mower.y - viewH / 2, 0, WORLD_H - viewH);
 }
 
 // ------------------------------------------------------------
-//  Rendu
+//  Rendu (caméra : on blit la portion visible du monde)
 // ------------------------------------------------------------
 function draw() {
-  // 1) fond : image du jardin (ou repli)
-  if (bgReady) ctx.drawImage(bg, 0, 0, W, H);
-  else drawFallback();
-
-  // 2) pelouse tondue = masque (herbe) ∩ traînée révélée
-  mowCtx.clearRect(0, 0, W, H);
-  mowCtx.globalCompositeOperation = "source-over";
-  mowCtx.drawImage(maskCanvas, 0, 0);
-  mowCtx.globalCompositeOperation = "destination-in";
-  mowCtx.drawImage(revealCanvas, 0, 0);
-  mowCtx.globalCompositeOperation = "source-over";
-
-  ctx.save();
-  ctx.globalAlpha = 0.6; // laisse transparaître la texture du gazon
-  ctx.drawImage(mowCanvas, 0, 0);
-  ctx.restore();
-
-  // 3) tondeuse
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(grassCanvas, cam.x, cam.y, viewW, viewH, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(mowCanvas, cam.x, cam.y, viewW, viewH, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(decorCanvas, cam.x, cam.y, viewW, viewH, 0, 0, canvas.width, canvas.height);
   drawMower();
 }
 
-// Repli quand l'image n'est pas (encore) chargée : pelouse + obstacles repérés.
-function drawFallback() {
-  ctx.fillStyle = "#3f7a2a";
-  ctx.fillRect(0, 0, W, H);
-  // clôture
-  ctx.strokeStyle = "#8a5a32";
-  ctx.lineWidth = Math.max(4, 0.01 * W);
-  ctx.strokeRect(bounds.x0, bounds.y0, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
-  // zones
-  for (const s of paved) { ctx.fillStyle = "#b9b3a7"; fillShape(ctx, s); }
-  for (const s of flowers) { ctx.fillStyle = "rgba(210,90,150,0.45)"; fillShape(ctx, s); }
-  for (const s of solids) { ctx.fillStyle = "#6b4a2a"; fillShape(ctx, s); }
-}
-
 function drawMower() {
-  const S = W / 800; // échelle selon la résolution
+  const sx = (mower.x - cam.x) * ZOOM;
+  const sy = (mower.y - cam.y) * ZOOM;
   ctx.save();
-  ctx.translate(mower.x, mower.y);
+  ctx.translate(sx, sy);
   ctx.rotate(mower.angle);
-  ctx.scale(S, S);
+  ctx.scale(ZOOM, ZOOM); // dessin en unités-monde
 
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(2, 3, 18, 14, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath(); ctx.ellipse(2, 3, 20, 15, 0, 0, Math.PI * 2); ctx.fill();
 
   ctx.fillStyle = damageCooldown > 0 ? "#ff7b5e" : "#d83a2f";
-  roundRect(-16, -12, 30, 24, 6); ctx.fill();
+  mRoundRect(-18, -14, 34, 28, 7); ctx.fill();
+  ctx.fillStyle = "#b32a22"; mRoundRect(5, -12, 14, 24, 5); ctx.fill();
 
-  ctx.fillStyle = "#b32a22";
-  roundRect(4, -10, 12, 20, 4); ctx.fill();
-
-  ctx.strokeStyle = "#dddddd";
-  ctx.lineWidth = 2;
-  const t = performance.now() / 60;
+  ctx.strokeStyle = "#e8e8e8"; ctx.lineWidth = 2.5;
+  const t = performance.now() / 55;
   ctx.beginPath();
-  ctx.moveTo(10 + Math.cos(t) * 6, Math.sin(t) * 6);
-  ctx.lineTo(10 - Math.cos(t) * 6, -Math.sin(t) * 6);
-  ctx.stroke();
+  ctx.moveTo(12 + Math.cos(t) * 7, Math.sin(t) * 7);
+  ctx.lineTo(12 - Math.cos(t) * 7, -Math.sin(t) * 7); ctx.stroke();
 
-  ctx.fillStyle = "#222";
-  roundRect(-14, -7, 8, 14, 3); ctx.fill();
-
+  ctx.fillStyle = "#222"; mRoundRect(-16, -8, 9, 16, 3); ctx.fill();
   ctx.restore();
 }
-
-function roundRect(x, y, w, h, r) {
+function mRoundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -527,9 +658,7 @@ function roundRect(x, y, w, h, r) {
 // ------------------------------------------------------------
 //  HUD
 // ------------------------------------------------------------
-function coveragePct() {
-  return mowableTotal ? Math.min(100, Math.round((mowedCount / mowableTotal) * 100)) : 0;
-}
+function coveragePct() { return mowableTotal ? Math.min(100, Math.round((mowedCount / mowableTotal) * 100)) : 0; }
 function updateHUD() {
   el.mowed.textContent = coveragePct() + "%";
   el.score.textContent = score;
@@ -542,16 +671,11 @@ function updateHUD() {
   el.time.textContent = elapsed.toFixed(1) + "s";
 }
 
-// ------------------------------------------------------------
-//  Fin de partie
-// ------------------------------------------------------------
 function endGame(won) {
   state = won ? "won" : "lost";
   let stars = "";
   if (won) {
-    let s = 1;
-    if (flowersDestroyed === 0) s++;
-    if (elapsed < 60) s++;
+    let s = 1; if (flowersDestroyed === 0) s++; if (elapsed < 90) s++;
     stars = "⭐".repeat(s) + "☆".repeat(3 - s);
   }
   showOverlay(
@@ -562,50 +686,35 @@ function endGame(won) {
     won ? "Rejouer" : "Réessayer"
   );
 }
-
 function showOverlay(title, text, btn) {
-  el.overlayTitle.textContent = title;
-  el.overlayText.textContent = text;
-  el.overlayBtn.textContent = btn;
-  el.overlay.classList.remove("hidden");
+  el.overlayTitle.textContent = title; el.overlayText.textContent = text;
+  el.overlayBtn.textContent = btn; el.overlay.classList.remove("hidden");
 }
 function hideOverlay() { el.overlay.classList.add("hidden"); }
 
 // ------------------------------------------------------------
-//  Boucle principale
+//  Boucle
 // ------------------------------------------------------------
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  update(dt);
-  draw();
-  updateHUD();
+  update(dt); draw(); updateHUD();
   requestAnimationFrame(loop);
 }
 
 // ------------------------------------------------------------
 //  Démarrage
 // ------------------------------------------------------------
-buildAll();
+buildWorld();
 mower = makeMower();
 keys = {};
 state = "menu";
-
-bg.onload = () => {
-  bgReady = true;
-  W = bg.naturalWidth; H = bg.naturalHeight;
-  buildAll();
-  mower = makeMower();
-  if (state === "playing") reset();
-  fitCanvas();
-};
-bg.onerror = () => { bgReady = false; };
-bg.src = "assets/garden.png";
-
+cam.x = clamp(mower.x - viewW / 2, 0, WORLD_W - viewW);
+cam.y = clamp(mower.y - viewH / 2, 0, WORLD_H - viewH);
 showOverlay(
   "🚜 Mow & Go",
-  "Tonds toute la pelouse du jardin 🏡\nLa tonte révèle une herbe vert clair.\nÉvite les massifs 🌸, la maison, les arbres et l'allée.\n\n" +
+  "Tonds toute la pelouse du jardin 🏡\nLa caméra suit la tondeuse : le jardin défile quand tu approches du bord.\nÉvite les massifs 🌸, la mare, les arbres et la maison.\n\n" +
   (isTouch ? "Pose ton pouce pour conduire · ⚡ Turbo" : "Déplacement : flèches ou ZQSD · Maj = turbo"),
   "Jouer"
 );
