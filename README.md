@@ -4,10 +4,14 @@ Petit jeu de tondeuse à gazon en **vue de dessus**, en HTML5 Canvas + JavaScrip
 
 ## But du jeu
 
-**Recouvre tout le jardin** en laissant une **traînée tondue** derrière la
-tondeuse… sans tout casser :
+Tu tonds la pelouse d'un **vrai jardin de pavillon** : maison 🏠, garage,
+allée pavée, terrasse, clôture, massifs et arbres. **Recouvre toute la
+pelouse** en laissant une **traînée tondue** derrière la tondeuse… sans
+tout casser :
 
-- 🌱 **Pelouse** → la tondeuse laisse une traînée continue (largeur de la lame) ; il faut couvrir tout le jardin
+- 🌱 **Pelouse** → la tondeuse laisse une traînée continue (largeur de la lame) ; il faut couvrir toute la pelouse autour des bâtiments
+- 🏠 **Maison / garage / clôture** → obstacles solides à contourner
+- 🛣️ **Allée pavée / terrasse** → se traversent librement (rien à tondre)
 - 🌸 **Massifs de fleurs** → ne roule **PAS** dessus (−30 pts, fleurs détruites)
 - 🌳 **Arbres** / 🪨 **rochers** → obstacles solides : les percuter **vite** endommage la tondeuse (mais elle est robuste !)
 - ❤️ La tondeuse a une **barre de vie** : à 0, c'est game over

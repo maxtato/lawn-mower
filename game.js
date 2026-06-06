@@ -16,14 +16,20 @@ const ROWS = canvas.height / TILE; // 15
 // Types de tuiles (l'herbe est un fond continu ; seuls les éléments
 // spéciaux sont stockés dans la grille)
 const T = {
-  GRASS: 0,   // pelouse (fond)
-  FLOWER: 1,  // massif de fleurs (à éviter)
-  TREE: 2,    // arbre (obstacle solide)
-  ROCK: 3,    // rocher (obstacle solide)
-  CRUSHED: 4  // fleur écrasée
+  GRASS: 0,    // pelouse (fond)
+  FLOWER: 1,   // massif de fleurs (à éviter)
+  TREE: 2,     // arbre (obstacle solide)
+  ROCK: 3,     // rocher (obstacle solide)
+  CRUSHED: 4,  // fleur écrasée
+  HOUSE: 5,    // maison (obstacle solide)
+  GARAGE: 6,   // garage (obstacle solide)
+  PAVED: 7,    // allée / terrasse pavée (carrossable, non tondable)
+  FENCE: 8     // clôture (obstacle solide, bordure)
 };
 
-const SOLID = new Set([T.TREE, T.ROCK]);
+const SOLID = new Set([T.TREE, T.ROCK, T.HOUSE, T.GARAGE, T.FENCE]);
+// Surfaces non tondables (en plus des obstacles) : fleurs et zones pavées
+const UNMOWABLE = new Set([T.FLOWER, T.CRUSHED, T.PAVED]);
 
 // --- Tonte : traînée peinte + grille de couverture ---
 const CELL = 8;                              // finesse de la grille de couverture
@@ -35,6 +41,11 @@ let cov;                 // Uint8Array : 0 = à tondre, 1 = tondu, 2 = non tonda
 let mowableTotal = 0;    // nb de cellules tondables
 let mowedCount = 0;      // nb de cellules déjà tondues
 let prevX = 0, prevY = 0; // position précédente (pour relier la traînée)
+
+// Décor du jardin (rectangles en pixels, pour un rendu net sans seams)
+let houseRect = null;
+let garageRect = null;
+let pavedRects = [];
 
 // Calque hors-écran : la pelouse tondue (la traînée)
 const mowCanvas = document.createElement("canvas");
@@ -73,37 +84,58 @@ const el = {
 // ------------------------------------------------------------
 //  Génération du niveau
 // ------------------------------------------------------------
+// Remplit un rectangle de tuiles (coordonnées col/row incluses).
+function fillTiles(c0, r0, c1, r1, type) {
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++)
+      if (r >= 0 && c >= 0 && r < ROWS && c < COLS) grid[r][c] = type;
+}
+
+// Rectangle en pixels à partir de coordonnées de tuiles (incluses).
+function rectPx(c0, r0, c1, r1) {
+  return { x: c0 * TILE, y: r0 * TILE, w: (c1 - c0 + 1) * TILE, h: (r1 - r0 + 1) * TILE };
+}
+
+// Compose un jardin de pavillon typique : maison + garage, allée pavée,
+// terrasse, clôture tout autour, massifs de fleurs, arbres — et de la
+// pelouse à tondre tout autour.
 function buildLevel() {
   grid = [];
   for (let r = 0; r < ROWS; r++) {
     const row = [];
-    for (let c = 0; c < COLS; c++) {
-      row.push(T.GRASS);
-    }
+    for (let c = 0; c < COLS; c++) row.push(T.GRASS);
     grid.push(row);
   }
+  pavedRects = [];
 
-  // Bordure d'arbres tout autour du jardin
-  for (let c = 0; c < COLS; c++) {
-    grid[0][c] = T.TREE;
-    grid[ROWS - 1][c] = T.TREE;
-  }
-  for (let r = 0; r < ROWS; r++) {
-    grid[r][0] = T.TREE;
-    grid[r][COLS - 1] = T.TREE;
-  }
+  // Clôture sur tout le pourtour
+  for (let c = 0; c < COLS; c++) { grid[0][c] = T.FENCE; grid[ROWS - 1][c] = T.FENCE; }
+  for (let r = 0; r < ROWS; r++) { grid[r][0] = T.FENCE; grid[r][COLS - 1] = T.FENCE; }
 
-  // Quelques rochers
-  const rocks = [[4, 6], [9, 13], [11, 4], [3, 15], [7, 9]];
-  for (const [r, c] of rocks) grid[r][c] = T.ROCK;
+  // Maison (haut-droite) et garage accolé en dessous
+  fillTiles(14, 1, 18, 5, T.HOUSE);
+  houseRect = rectPx(14, 1, 18, 5);
+  fillTiles(14, 6, 16, 8, T.GARAGE);
+  garageRect = rectPx(14, 6, 16, 8);
 
-  // Quelques arbres isolés
-  const trees = [[5, 11], [10, 7], [2, 9], [12, 16]];
-  for (const [r, c] of trees) grid[r][c] = T.TREE;
+  // Allée pavée : du garage jusqu'au portail en bas
+  fillTiles(14, 9, 16, 13, T.PAVED);
+  pavedRects.push(rectPx(14, 9, 16, 13));
 
-  // Massifs de fleurs (petits blocs)
-  const beds = [[3, 3], [3, 4], [4, 3], [8, 16], [8, 17], [12, 11], [12, 12], [6, 4]];
-  for (const [r, c] of beds) grid[r][c] = T.FLOWER;
+  // Terrasse pavée à gauche de la maison
+  fillTiles(10, 1, 13, 3, T.PAVED);
+  pavedRects.push(rectPx(10, 1, 13, 3));
+
+  // Massifs de fleurs (bordures fleuries)
+  fillTiles(6, 1, 8, 1, T.FLOWER);   // bande le long de la clôture haute
+  fillTiles(1, 5, 1, 9, T.FLOWER);   // plate-bande le long de la clôture gauche
+  fillTiles(2, 13, 4, 13, T.FLOWER); // massif en bas à gauche
+
+  // Arbres isolés dans la pelouse
+  for (const [r, c] of [[6, 6], [10, 9], [3, 4], [11, 11]]) grid[r][c] = T.TREE;
+
+  // Rocaille
+  for (const [r, c] of [[8, 11], [5, 8]]) grid[r][c] = T.ROCK;
 
   buildCoverage();
   buildField();
@@ -120,11 +152,11 @@ function buildCoverage() {
       const y = (r + 0.5) * CELL;
       const tc = Math.floor(x / TILE);
       const tr = Math.floor(y / TILE);
-      const tile = (tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS) ? grid[tr][tc] : T.TREE;
-      if (SOLID.has(tile) || tile === T.FLOWER) {
-        cov[r * CW + c] = 2; // non tondable
+      const tile = (tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS) ? grid[tr][tc] : T.FENCE;
+      if (SOLID.has(tile) || UNMOWABLE.has(tile)) {
+        cov[r * CW + c] = 2; // non tondable (obstacle, fleurs ou pavé)
       } else {
-        cov[r * CW + c] = 0; // à tondre
+        cov[r * CW + c] = 0; // pelouse à tondre
         mowableTotal++;
       }
     }
@@ -499,16 +531,115 @@ function draw() {
   ctx.drawImage(fieldCanvas, 0, 0);
   ctx.drawImage(mowCanvas, 0, 0);
 
-  // 3) fleurs et obstacles (dessinés sur la pelouse, sans fond carré)
+  // 3) surfaces pavées (cachent la traînée : pas d'herbe sur l'allée)
+  for (const p of pavedRects) drawPaved(p);
+
+  // 4) bâtiments + clôture
+  if (houseRect) drawHouse(houseRect);
+  if (garageRect) drawGarage(garageRect);
+  drawFence();
+
+  // 5) fleurs, arbres, rochers (par-dessus la pelouse, sans fond carré)
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const tile = grid[r][c];
-      if (tile !== T.GRASS) drawTile(tile, c * TILE, r * TILE);
+      if (tile === T.FLOWER || tile === T.CRUSHED || tile === T.TREE || tile === T.ROCK) {
+        drawTile(tile, c * TILE, r * TILE);
+      }
     }
   }
 
-  // 4) tondeuse
+  // 6) tondeuse
   drawMower();
+}
+
+// ---- Décor du jardin ----
+function drawPaved(p) {
+  ctx.fillStyle = "#b9b3a7";
+  ctx.fillRect(p.x, p.y, p.w, p.h);
+  // joints de dalles
+  ctx.strokeStyle = "rgba(120,115,105,0.6)";
+  ctx.lineWidth = 1;
+  for (let x = p.x; x <= p.x + p.w; x += 20) {
+    ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x, p.y + p.h); ctx.stroke();
+  }
+  for (let y = p.y; y <= p.y + p.h; y += 20) {
+    ctx.beginPath(); ctx.moveTo(p.x, y); ctx.lineTo(p.x + p.w, y); ctx.stroke();
+  }
+}
+
+function drawHouse(h) {
+  // murs
+  ctx.fillStyle = "#e8d9b5";
+  ctx.fillRect(h.x, h.y, h.w, h.h);
+  ctx.strokeStyle = "#b8a888";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2);
+  // toit (bande sur le haut)
+  const roofH = Math.min(34, h.h * 0.32);
+  ctx.fillStyle = "#9c3b2e";
+  ctx.fillRect(h.x - 4, h.y - 4, h.w + 8, roofH);
+  ctx.fillStyle = "#7e2e23";
+  ctx.fillRect(h.x - 4, h.y - 4, h.w + 8, 6);
+  // porte
+  ctx.fillStyle = "#6b4a2a";
+  const dw = 22, dh = 36;
+  ctx.fillRect(h.x + h.w / 2 - dw / 2, h.y + h.h - dh, dw, dh);
+  ctx.fillStyle = "#d9b94e";
+  ctx.beginPath();
+  ctx.arc(h.x + h.w / 2 + dw / 2 - 5, h.y + h.h - dh / 2, 2, 0, Math.PI * 2);
+  ctx.fill();
+  // fenêtres
+  ctx.fillStyle = "#8fd0e6";
+  const wy = h.y + roofH + 10;
+  for (const wx of [h.x + 16, h.x + h.w - 16 - 24]) {
+    ctx.fillRect(wx, wy, 24, 22);
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(wx, wy, 24, 22);
+    ctx.beginPath();
+    ctx.moveTo(wx + 12, wy); ctx.lineTo(wx + 12, wy + 22);
+    ctx.moveTo(wx, wy + 11); ctx.lineTo(wx + 24, wy + 11);
+    ctx.stroke();
+  }
+}
+
+function drawGarage(g) {
+  ctx.fillStyle = "#d8cdb6";
+  ctx.fillRect(g.x, g.y, g.w, g.h);
+  // toit plat foncé
+  ctx.fillStyle = "#8a4034";
+  ctx.fillRect(g.x - 3, g.y - 3, g.w + 6, 10);
+  // porte de garage avec rainures
+  ctx.fillStyle = "#9aa0a6";
+  const px = g.x + 8, py = g.y + 16, pw = g.w - 16, ph = g.h - 24;
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = "#7d838a";
+  ctx.lineWidth = 1;
+  for (let y = py + 8; y < py + ph; y += 9) {
+    ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px + pw, y); ctx.stroke();
+  }
+  ctx.strokeStyle = "#7d838a";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, pw, ph);
+}
+
+function drawFence() {
+  const W = canvas.width, H = canvas.height;
+  const m = TILE / 2; // axe des rails (centre des tuiles de bordure)
+  ctx.strokeStyle = "#8a5a32";
+  ctx.lineWidth = 5;
+  ctx.strokeRect(m, m, W - 2 * m, H - 2 * m);
+  // poteaux tous les TILE
+  ctx.fillStyle = "#6e4626";
+  for (let x = m; x <= W - m; x += TILE) {
+    ctx.fillRect(x - 3, m - 6, 6, 12);
+    ctx.fillRect(x - 3, H - m - 6, 6, 12);
+  }
+  for (let y = m; y <= H - m; y += TILE) {
+    ctx.fillRect(m - 3, y - 6, 6, 12);
+    ctx.fillRect(W - m - 3, y - 6, 6, 12);
+  }
 }
 
 function drawTile(type, x, y) {
@@ -687,7 +818,7 @@ keys = {};
 state = "menu";
 showOverlay(
   "🚜 Mow & Go",
-  "Tonds tout le gazon !\nÉvite les massifs de fleurs 🌸\nNe percute pas les arbres 🌳 ni les rochers 🪨.\n\n" +
+  "Tonds toute la pelouse autour de la maison 🏠\nÉvite les massifs de fleurs 🌸\nNe percute pas la maison, le garage ni les arbres 🌳.\nL'allée pavée se traverse librement.\n\n" +
   (isTouch ? "Pose ton pouce pour conduire · ⚡ Turbo" : "Déplacement : flèches ou ZQSD · Maj = turbo"),
   "Jouer"
 );
