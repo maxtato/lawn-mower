@@ -11,6 +11,7 @@
 <body>
   <div id="game-wrapper">
     <header id="hud">
+      <button id="fs-btn" aria-label="Plein écran" title="Plein écran">⛶</button>
       <h1>🚜 Mow &amp; Go</h1>
       <div class="stats">
         <div class="stat">
@@ -39,15 +40,18 @@
     <div id="stage">
       <canvas id="game" width="800" height="600"></canvas>
 
-      <!-- Joystick virtuel tactile (mobile) -->
+      <!-- Joystick virtuel dynamique (apparaît sous le doigt) -->
       <div id="joystick" aria-hidden="true">
         <div id="joy-knob"></div>
       </div>
+
+      <!-- Bouton turbo tactile -->
+      <button id="boost-btn" aria-label="Turbo">⚡</button>
     </div>
 
     <footer id="controls">
       <span class="desktop-only">Déplacer&nbsp;: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd></span>
-      <span class="touch-only">🕹️ Glisse le joystick pour conduire</span>
+      <span class="touch-only">🕹️ Pose ton pouce pour conduire · ⚡ Turbo</span>
       <span><kbd>R</kbd> Recommencer</span>
     </footer>
 

@@ -94,26 +94,74 @@ canvas {
   touch-action: none; /* pas de scroll/zoom pendant le jeu */
 }
 
-/* ---- Joystick virtuel ---- */
+/* ---- Joystick virtuel dynamique (apparaît sous le doigt) ---- */
 #joystick {
   position: absolute;
-  left: 18px;
-  bottom: 18px;
+  left: 0;
+  top: 0;
   width: 130px;
   height: 130px;
+  margin-left: -65px; /* centré sur le point de contact */
+  margin-top: -65px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(255,255,255,0.14), rgba(0,0,0,0.22));
   border: 2px solid rgba(255,255,255,0.35);
   touch-action: none;
-  display: none; /* affiché par JS sur appareil tactile */
+  display: none; /* affiché par JS uniquement pendant le contact */
   align-items: center;
   justify-content: center;
-  z-index: 5;
+  z-index: 6;
+  pointer-events: none; /* ne capte pas les touches : c'est purement visuel */
   -webkit-user-select: none;
   user-select: none;
 }
 
 #joystick.visible { display: flex; }
+
+/* ---- Bouton turbo ---- */
+#boost-btn {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.55);
+  background: radial-gradient(circle at 35% 30%, #ffd23f, #e0892f);
+  color: #3a2200;
+  font-size: 2rem;
+  display: none; /* affiché sur appareil tactile */
+  align-items: center;
+  justify-content: center;
+  z-index: 7;
+  touch-action: none;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.45);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+body.touch #boost-btn { display: flex; }
+#boost-btn.active { transform: scale(0.92); filter: brightness(1.25); }
+
+/* ---- Bouton plein écran ---- */
+#fs-btn {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: var(--text);
+  font-size: 1.2rem;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 8;
+  line-height: 1;
+}
+#fs-btn:hover { background: rgba(0,0,0,0.45); }
+#hud { position: relative; }
 
 #joy-knob {
   width: 58px;
@@ -199,3 +247,55 @@ kbd {
 }
 
 #overlay-btn:hover { background: var(--accent-dark); color: var(--text); transform: scale(1.05); }
+
+/* ============================================================
+   Plein écran sur mobile : occupe tout l'écran de l'iPhone.
+   Le canvas est redimensionné en JS (fitCanvas) pour remplir
+   l'espace disponible en gardant ses proportions.
+   ============================================================ */
+body.touch {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+body.touch #game-wrapper {
+  width: 100vw;
+  max-width: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+body.touch #hud { border-radius: 0; }
+body.touch #controls { border-radius: 0; margin-top: auto; }
+
+body.touch #stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #131c12;
+  /* zones sûres iPhone (encoche / barre home) */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.touch canvas { width: auto; }
+
+/* API plein écran (desktop / Android / iPad) */
+#game-wrapper:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  background: #131c12;
+}
+#game-wrapper:fullscreen #stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#game-wrapper:fullscreen canvas { width: auto; }

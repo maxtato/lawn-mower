@@ -15,14 +15,23 @@ Tonds **100 % du gazon** d'un jardin… sans tout casser :
 
 ## Contrôles
 
-| Action       | Ordinateur                        | Mobile / iPhone           |
-|--------------|-----------------------------------|---------------------------|
-| Se déplacer  | `↑` `↓` `←` `→` ou `Z` `Q` `S` `D` | 🕹️ Joystick virtuel (360°) |
-| Recommencer  | `R`                               | Bouton « Rejouer »        |
+| Action       | Ordinateur                          | Mobile / iPhone                 |
+|--------------|-------------------------------------|---------------------------------|
+| Se déplacer  | `↑` `↓` `←` `→` ou `Z` `Q` `S` `D`   | 🕹️ Joystick dynamique (360°)     |
+| Turbo        | `Maj`                               | Bouton ⚡ (en bas à droite)      |
+| Recommencer  | `R`                                 | Bouton « Rejouer »              |
 
-Sur appareil tactile, un **joystick virtuel** apparaît en bas à gauche : glisse-le
-dans n'importe quelle direction pour conduire la tondeuse partout, à vitesse
-proportionnelle à l'amplitude (déplacement libre, pas de grille).
+Sur appareil tactile, le **joystick apparaît là où tu poses le pouce**, n'importe
+où sur l'aire de jeu : glisse dans n'importe quelle direction pour conduire la
+tondeuse partout, à vitesse **proportionnelle à l'amplitude** (déplacement libre,
+pas de grille). Le bouton **⚡ Turbo** accélère — mais attention aux chocs !
+
+Le jeu **occupe tout l'écran** sur mobile, et un bouton **plein écran ⛶** est
+disponible sur ordinateur / Android / iPad.
+
+## En ligne
+
+Déployé sur Vercel : **https://lawn-mower.vercel.app**
 
 ## Lancer le jeu
 

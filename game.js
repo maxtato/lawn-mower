@@ -132,34 +132,41 @@ document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; }
 el.overlayBtn.addEventListener("click", reset);
 
 // ------------------------------------------------------------
-//  Joystick virtuel tactile (mobile / iPhone)
+//  Joystick virtuel DYNAMIQUE (apparaît sous le doigt) + Turbo
 // ------------------------------------------------------------
+const stageEl = document.getElementById("stage");
 const joyEl = document.getElementById("joystick");
 const knobEl = document.getElementById("joy-knob");
+const boostBtn = document.getElementById("boost-btn");
+const fsBtn = document.getElementById("fs-btn");
+const hudEl = document.getElementById("hud");
+const ctrlEl = document.getElementById("controls");
+
 const joy = {
   active: false,
   id: null,      // identifiant du toucher suivi
-  baseX: 0,
+  baseX: 0,      // point d'apparition (centre)
   baseY: 0,
   dx: 0,
   dy: 0,
   mag: 0,        // 0..1 (vitesse analogique)
-  maxR: 50       // amplitude max du knob en px
+  maxR: 55       // amplitude max du knob en px
 };
+let boostHeld = false; // turbo via bouton tactile
 
-// Affiche le joystick si l'appareil est tactile
 const isTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
-if (isTouch) {
-  document.body.classList.add("touch");
-  joyEl.classList.add("visible");
-}
+if (isTouch) document.body.classList.add("touch");
 
+// --- Joystick : apparition au point de contact ---
 function joyStart(clientX, clientY, id) {
-  const rect = joyEl.getBoundingClientRect();
-  joy.baseX = rect.left + rect.width / 2;
-  joy.baseY = rect.top + rect.height / 2;
+  joy.baseX = clientX;
+  joy.baseY = clientY;
   joy.id = id;
   joy.active = true;
+  const r = stageEl.getBoundingClientRect();
+  joyEl.style.left = (clientX - r.left) + "px";
+  joyEl.style.top = (clientY - r.top) + "px";
+  joyEl.classList.add("visible");
   joyMove(clientX, clientY);
 }
 
@@ -180,12 +187,14 @@ function joyEnd() {
   joy.id = null;
   joy.dx = joy.dy = joy.mag = 0;
   knobEl.style.transform = "translate(0px, 0px)";
+  joyEl.classList.remove("visible");
 }
 
-// Touch events (mobile)
-joyEl.addEventListener("touchstart", (e) => {
-  e.preventDefault();
+// Le joystick peut naître n'importe où sur l'aire de jeu (un seul doigt suivi)
+stageEl.addEventListener("touchstart", (e) => {
+  if (joy.active) return;                 // déjà un doigt sur le manche
   const t = e.changedTouches[0];
+  e.preventDefault();
   joyStart(t.clientX, t.clientY, t.identifier);
 }, { passive: false });
 
@@ -207,8 +216,9 @@ window.addEventListener("touchend", (e) => {
 });
 window.addEventListener("touchcancel", joyEnd);
 
-// Mouse events (test sur ordinateur)
-joyEl.addEventListener("mousedown", (e) => {
+// Souris : test du joystick sur ordinateur
+stageEl.addEventListener("mousedown", (e) => {
+  if (e.target === boostBtn) return;
   e.preventDefault();
   joyStart(e.clientX, e.clientY, "mouse");
 });
@@ -216,6 +226,45 @@ window.addEventListener("mousemove", (e) => {
   if (joy.active && joy.id === "mouse") joyMove(e.clientX, e.clientY);
 });
 window.addEventListener("mouseup", () => { if (joy.id === "mouse") joyEnd(); });
+
+// --- Bouton turbo (capte ses propres touches, sans déclencher le joystick) ---
+function boostOn(e) { e.preventDefault(); e.stopPropagation(); boostHeld = true; boostBtn.classList.add("active"); }
+function boostOff(e) { if (e) e.stopPropagation(); boostHeld = false; boostBtn.classList.remove("active"); }
+boostBtn.addEventListener("touchstart", boostOn, { passive: false });
+boostBtn.addEventListener("touchend", boostOff);
+boostBtn.addEventListener("touchcancel", boostOff);
+boostBtn.addEventListener("mousedown", boostOn);
+window.addEventListener("mouseup", boostOff);
+
+// --- Plein écran + mise à l'échelle du canvas ---
+function fitCanvas() {
+  const fs = document.fullscreenElement === wrapper;
+  if (!document.body.classList.contains("touch") && !fs) {
+    canvas.style.width = "";
+    canvas.style.height = "";
+    return;
+  }
+  const availW = window.innerWidth;
+  const availH = window.innerHeight - hudEl.offsetHeight - ctrlEl.offsetHeight;
+  const scale = Math.min(availW / canvas.width, availH / canvas.height);
+  canvas.style.width = Math.floor(canvas.width * scale) + "px";
+  canvas.style.height = Math.floor(canvas.height * scale) + "px";
+}
+
+const wrapper = document.getElementById("game-wrapper");
+if (!(wrapper.requestFullscreen)) {
+  fsBtn.style.display = "none"; // API non dispo (ex. Safari iPhone) → masqué
+}
+fsBtn.addEventListener("click", () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else if (wrapper.requestFullscreen) {
+    wrapper.requestFullscreen().catch(() => {});
+  }
+});
+document.addEventListener("fullscreenchange", () => setTimeout(fitCanvas, 60));
+window.addEventListener("resize", fitCanvas);
+window.addEventListener("orientationchange", () => setTimeout(fitCanvas, 200));
 
 function dirFromKeys() {
   let dx = 0, dy = 0;
@@ -270,10 +319,12 @@ function update(dt) {
   elapsed = (performance.now() - startTime) / 1000;
 
   const inp = getInputVector();
+  const boosting = boostHeld || !!keys["shift"];
+  const effMax = mower.maxSpeed * (boosting ? 1.7 : 1); // turbo
 
   if (inp.active) {
     mower.angle = Math.atan2(inp.dy, inp.dx);
-    const target = mower.maxSpeed * inp.mag; // vitesse proportionnelle au joystick
+    const target = effMax * inp.mag; // vitesse proportionnelle au joystick
     if (mower.speed < target) {
       mower.speed = Math.min(target, mower.speed + mower.accel * dt);
     } else {
@@ -552,7 +603,9 @@ keys = {};
 state = "menu";
 showOverlay(
   "🚜 Mow & Go",
-  "Tonds tout le gazon !\nÉvite les massifs de fleurs 🌸\nNe percute pas les arbres 🌳 ni les rochers 🪨.\n\nDéplacement : flèches ou ZQSD",
+  "Tonds tout le gazon !\nÉvite les massifs de fleurs 🌸\nNe percute pas les arbres 🌳 ni les rochers 🪨.\n\n" +
+  (isTouch ? "Pose ton pouce pour conduire · ⚡ Turbo" : "Déplacement : flèches ou ZQSD · Maj = turbo"),
   "Jouer"
 );
+fitCanvas();
 requestAnimationFrame(loop);
