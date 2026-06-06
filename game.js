@@ -13,23 +13,44 @@ const TILE = 40;
 const COLS = canvas.width / TILE;  // 20
 const ROWS = canvas.height / TILE; // 15
 
-// Types de tuiles
+// Types de tuiles (l'herbe est un fond continu ; seuls les éléments
+// spéciaux sont stockés dans la grille)
 const T = {
-  TALL: 0,   // herbe haute (à tondre)
-  CUT: 1,    // herbe tondue
-  FLOWER: 2, // massif de fleurs (à éviter)
-  TREE: 3,   // arbre (obstacle solide)
-  ROCK: 4,   // rocher (obstacle solide)
-  CRUSHED: 5 // fleur écrasée
+  GRASS: 0,   // pelouse (fond)
+  FLOWER: 1,  // massif de fleurs (à éviter)
+  TREE: 2,    // arbre (obstacle solide)
+  ROCK: 3,    // rocher (obstacle solide)
+  CRUSHED: 4  // fleur écrasée
 };
 
 const SOLID = new Set([T.TREE, T.ROCK]);
 
+// --- Tonte : traînée peinte + grille de couverture ---
+const CELL = 8;                              // finesse de la grille de couverture
+const CW = Math.ceil(canvas.width / CELL);   // colonnes
+const CH = Math.ceil(canvas.height / CELL);  // lignes
+const DECK = 18;                             // demi-largeur de coupe (px)
+
+let cov;                 // Uint8Array : 0 = à tondre, 1 = tondu, 2 = non tondable
+let mowableTotal = 0;    // nb de cellules tondables
+let mowedCount = 0;      // nb de cellules déjà tondues
+let prevX = 0, prevY = 0; // position précédente (pour relier la traînée)
+
+// Calque hors-écran : la pelouse tondue (la traînée)
+const mowCanvas = document.createElement("canvas");
+mowCanvas.width = canvas.width;
+mowCanvas.height = canvas.height;
+const mowCtx = mowCanvas.getContext("2d");
+
+// Calque hors-écran : le fond de pelouse (rendu une seule fois)
+const fieldCanvas = document.createElement("canvas");
+fieldCanvas.width = canvas.width;
+fieldCanvas.height = canvas.height;
+const fieldCtx = fieldCanvas.getContext("2d");
+
 // --- État global ---
 let grid = [];
 let mower, keys, state;
-let totalGrass = 0;
-let mowedGrass = 0;
 let score = 0;
 let flowersDestroyed = 0;
 let startTime = 0;
@@ -54,11 +75,10 @@ const el = {
 // ------------------------------------------------------------
 function buildLevel() {
   grid = [];
-  totalGrass = 0;
   for (let r = 0; r < ROWS; r++) {
     const row = [];
     for (let c = 0; c < COLS; c++) {
-      row.push(T.TALL);
+      row.push(T.GRASS);
     }
     grid.push(row);
   }
@@ -85,10 +105,49 @@ function buildLevel() {
   const beds = [[3, 3], [3, 4], [4, 3], [8, 16], [8, 17], [12, 11], [12, 12], [6, 4]];
   for (const [r, c] of beds) grid[r][c] = T.FLOWER;
 
-  // Compte l'herbe haute à tondre
-  for (let r = 0; r < ROWS; r++)
-    for (let c = 0; c < COLS; c++)
-      if (grid[r][c] === T.TALL) totalGrass++;
+  buildCoverage();
+  buildField();
+}
+
+// Construit la grille de couverture : une cellule est « tondable »
+// si son centre n'est ni sur un obstacle ni sur un massif de fleurs.
+function buildCoverage() {
+  cov = new Uint8Array(CW * CH);
+  mowableTotal = 0;
+  for (let r = 0; r < CH; r++) {
+    for (let c = 0; c < CW; c++) {
+      const x = (c + 0.5) * CELL;
+      const y = (r + 0.5) * CELL;
+      const tc = Math.floor(x / TILE);
+      const tr = Math.floor(y / TILE);
+      const tile = (tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS) ? grid[tr][tc] : T.TREE;
+      if (SOLID.has(tile) || tile === T.FLOWER) {
+        cov[r * CW + c] = 2; // non tondable
+      } else {
+        cov[r * CW + c] = 0; // à tondre
+        mowableTotal++;
+      }
+    }
+  }
+}
+
+// Pré-rendu du fond de pelouse (herbe haute, texture de brins).
+function buildField() {
+  const W = fieldCanvas.width, H = fieldCanvas.height;
+  fieldCtx.fillStyle = "#3f7a2a";
+  fieldCtx.fillRect(0, 0, W, H);
+  fieldCtx.strokeStyle = "rgba(22,60,16,0.5)";
+  fieldCtx.lineWidth = 1;
+  // brins d'herbe dispersés (déterministe pour rester stable)
+  let seed = 1234;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < 1600; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    fieldCtx.beginPath();
+    fieldCtx.moveTo(x, y);
+    fieldCtx.lineTo(x - 2, y - 7);
+    fieldCtx.stroke();
+  }
 }
 
 // ------------------------------------------------------------
@@ -104,18 +163,64 @@ function reset() {
     maxSpeed: 165,
     accel: 600,
     friction: 500,
-    radius: 14,
+    radius: 13,
     health: 100
   };
   keys = {};
-  mowedGrass = 0;
   score = 0;
+  mowedCount = 0;
   flowersDestroyed = 0;
   damageCooldown = 0;
   elapsed = 0;
   startTime = performance.now();
   state = "playing";
+
+  // Efface la traînée précédente et tond le point de départ
+  mowCtx.clearRect(0, 0, mowCanvas.width, mowCanvas.height);
+  prevX = mower.x;
+  prevY = mower.y;
+  stampAt(mower.x, mower.y);
+
   hideOverlay();
+}
+
+// Peint un coup de tondeuse (disque) sur le calque + met à jour la couverture.
+function stampAt(x, y) {
+  // traînée visible
+  mowCtx.fillStyle = "#8fd166";
+  mowCtx.beginPath();
+  mowCtx.arc(x, y, DECK, 0, Math.PI * 2);
+  mowCtx.fill();
+
+  // couverture (cellules dont le centre tombe dans le disque)
+  const minc = Math.max(0, Math.floor((x - DECK) / CELL));
+  const maxc = Math.min(CW - 1, Math.floor((x + DECK) / CELL));
+  const minr = Math.max(0, Math.floor((y - DECK) / CELL));
+  const maxr = Math.min(CH - 1, Math.floor((y + DECK) / CELL));
+  const R2 = DECK * DECK;
+  for (let r = minr; r <= maxr; r++) {
+    for (let c = minc; c <= maxc; c++) {
+      const idx = r * CW + c;
+      if (cov[idx] !== 0) continue; // déjà tondu ou non tondable
+      const dx = (c + 0.5) * CELL - x;
+      const dy = (r + 0.5) * CELL - y;
+      if (dx * dx + dy * dy <= R2) {
+        cov[idx] = 1;
+        mowedCount++;
+        score += 1;
+      }
+    }
+  }
+}
+
+// Relie deux positions par une suite de disques (traînée continue).
+function stampTrail(x0, y0, x1, y1) {
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  const steps = Math.max(1, Math.ceil(d / (DECK * 0.5)));
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    stampAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+  }
 }
 
 // ------------------------------------------------------------
@@ -353,93 +458,71 @@ function update(dt) {
     hitWall = true;
   }
 
-  // Dégâts si on percute un obstacle avec de la vitesse
+  // Dégâts si on percute un obstacle avec de la vitesse.
+  // Tondeuse robuste : seuls les chocs assez rapides comptent, et ils
+  // font peu de dégâts (longue durée de vie).
   if (damageCooldown > 0) damageCooldown -= dt;
-  if (hitWall && mower.speed > 60 && damageCooldown <= 0) {
-    const dmg = Math.round(6 + (mower.speed / mower.maxSpeed) * 14);
+  if (hitWall && mower.speed > 85 && damageCooldown <= 0) {
+    const dmg = Math.round(3 + (mower.speed / mower.maxSpeed) * 6); // ~3 à 9
     mower.health = Math.max(0, mower.health - dmg);
     score = Math.max(0, score - 5);
-    damageCooldown = 0.4;
+    damageCooldown = 0.6;
     mower.speed *= 0.2; // rebond / arrêt brutal
     if (mower.health <= 0) endGame(false);
   }
 
-  // Interaction avec la tuile sous la tondeuse
+  // Tonte : peint la traînée entre l'ancienne et la nouvelle position
+  if (mower.x !== prevX || mower.y !== prevY) {
+    stampTrail(prevX, prevY, mower.x, mower.y);
+    prevX = mower.x;
+    prevY = mower.y;
+  }
+
+  // Massif de fleurs écrasé si la tondeuse passe dessus
   const tc = Math.floor(mower.x / TILE);
   const tr = Math.floor(mower.y / TILE);
-  if (tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS) {
-    const tile = grid[tr][tc];
-    if (tile === T.TALL) {
-      grid[tr][tc] = T.CUT;
-      mowedGrass++;
-      score += 10;
-      if (mowedGrass >= totalGrass) endGame(true);
-    } else if (tile === T.FLOWER) {
-      grid[tr][tc] = T.CRUSHED;
-      flowersDestroyed++;
-      score = Math.max(0, score - 30);
-    }
+  if (tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS && grid[tr][tc] === T.FLOWER) {
+    grid[tr][tc] = T.CRUSHED;
+    flowersDestroyed++;
+    score = Math.max(0, score - 30);
   }
+
+  // Victoire quand le jardin est (quasi) entièrement recouvert
+  if (mowableTotal > 0 && mowedCount >= mowableTotal * 0.985) endGame(true);
 }
 
 // ------------------------------------------------------------
 //  Rendu
 // ------------------------------------------------------------
 function draw() {
-  // Tuiles
+  // 1) fond de pelouse  2) traînée tondue par-dessus
+  ctx.drawImage(fieldCanvas, 0, 0);
+  ctx.drawImage(mowCanvas, 0, 0);
+
+  // 3) fleurs et obstacles (dessinés sur la pelouse, sans fond carré)
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      const x = c * TILE, y = r * TILE;
-      drawTile(grid[r][c], x, y, r, c);
+      const tile = grid[r][c];
+      if (tile !== T.GRASS) drawTile(tile, c * TILE, r * TILE);
     }
   }
+
+  // 4) tondeuse
   drawMower();
 }
 
-function drawTile(type, x, y, r, c) {
-  // checker subtil pour lisibilité
-  const alt = (r + c) % 2 === 0;
+function drawTile(type, x, y) {
   switch (type) {
-    case T.TALL:
-      ctx.fillStyle = alt ? "#3f7a2a" : "#458a2f";
-      ctx.fillRect(x, y, TILE, TILE);
-      // brins d'herbe
-      ctx.strokeStyle = "rgba(20,60,15,0.5)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 3; i++) {
-        const gx = x + 8 + i * 11 + ((r * 7 + c * 13) % 5);
-        ctx.beginPath();
-        ctx.moveTo(gx, y + TILE - 6);
-        ctx.lineTo(gx - 2, y + TILE - 16);
-        ctx.stroke();
-      }
-      break;
-    case T.CUT:
-      ctx.fillStyle = alt ? "#7bbf4f" : "#84c957";
-      ctx.fillRect(x, y, TILE, TILE);
-      // lignes de tonte
-      ctx.strokeStyle = "rgba(255,255,255,0.10)";
-      ctx.beginPath();
-      ctx.moveTo(x, y + TILE / 2);
-      ctx.lineTo(x + TILE, y + TILE / 2);
-      ctx.stroke();
-      break;
     case T.FLOWER:
-      ctx.fillStyle = "#5a8a3c";
-      ctx.fillRect(x, y, TILE, TILE);
       drawFlower(x + TILE / 2, y + TILE / 2);
       break;
     case T.CRUSHED:
-      ctx.fillStyle = "#5a8a3c";
-      ctx.fillRect(x, y, TILE, TILE);
       ctx.fillStyle = "#6b4a2a";
       ctx.beginPath();
       ctx.arc(x + TILE / 2, y + TILE / 2, 9, 0, Math.PI * 2);
       ctx.fill();
       break;
     case T.TREE:
-      ctx.fillStyle = "#5a8a3c";
-      ctx.fillRect(x, y, TILE, TILE);
       ctx.fillStyle = "#2f6d22";
       ctx.beginPath();
       ctx.arc(x + TILE / 2, y + TILE / 2, 18, 0, Math.PI * 2);
@@ -450,8 +533,6 @@ function drawTile(type, x, y, r, c) {
       ctx.fill();
       break;
     case T.ROCK:
-      ctx.fillStyle = "#5a8a3c";
-      ctx.fillRect(x, y, TILE, TILE);
       ctx.fillStyle = "#8a8f96";
       ctx.beginPath();
       ctx.moveTo(x + 8, y + TILE - 8);
@@ -537,9 +618,12 @@ function roundRect(x, y, w, h, r) {
 // ------------------------------------------------------------
 //  HUD
 // ------------------------------------------------------------
+function coveragePct() {
+  return mowableTotal ? Math.min(100, Math.round((mowedCount / mowableTotal) * 100)) : 0;
+}
+
 function updateHUD() {
-  const pct = totalGrass ? Math.round((mowedGrass / totalGrass) * 100) : 0;
-  el.mowed.textContent = pct + "%";
+  el.mowed.textContent = coveragePct() + "%";
   el.score.textContent = score;
   el.flowers.textContent = flowersDestroyed + " 🌸";
   el.health.style.width = mower.health + "%";
@@ -567,7 +651,7 @@ function endGame(won) {
     won ? "Jardin tondu ! 🌿" : "Tondeuse HS 💥",
     won
       ? `${stars}\nScore : ${score}\nTemps : ${elapsed.toFixed(1)}s\nFleurs détruites : ${flowersDestroyed}`
-      : `Tu as percuté trop d'obstacles.\nTonte : ${Math.round((mowedGrass / totalGrass) * 100)}%\nScore : ${score}`,
+      : `Tu as percuté trop d'obstacles.\nTonte : ${coveragePct()}%\nScore : ${score}`,
     won ? "Rejouer" : "Réessayer"
   );
 }
@@ -598,7 +682,7 @@ function loop(now) {
 // ------------------------------------------------------------
 buildLevel();
 mower = { x: 1.5 * TILE, y: 1.5 * TILE, angle: 0, speed: 0,
-  maxSpeed: 165, accel: 600, friction: 500, radius: 14, health: 100 };
+  maxSpeed: 165, accel: 600, friction: 500, radius: 13, health: 100 };
 keys = {};
 state = "menu";
 showOverlay(
