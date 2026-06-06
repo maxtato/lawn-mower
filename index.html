@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mow &amp; Go 🚜</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-wrapper">
+    <header id="hud">
+      <h1>🚜 Mow &amp; Go</h1>
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Tonte</span>
+          <span id="mowed">0%</span>
+        </div>
+        <div class="stat">
+          <span class="label">Score</span>
+          <span id="score">0</span>
+        </div>
+        <div class="stat">
+          <span class="label">Fleurs</span>
+          <span id="flowers">0 🌸</span>
+        </div>
+        <div class="stat health">
+          <span class="label">Tondeuse</span>
+          <div class="health-bar"><div id="health-fill"></div></div>
+        </div>
+        <div class="stat">
+          <span class="label">Temps</span>
+          <span id="time">0.0s</span>
+        </div>
+      </div>
+    </header>
+
+    <canvas id="game" width="800" height="600"></canvas>
+
+    <footer id="controls">
+      <span>Déplacer&nbsp;: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd></span>
+      <span><kbd>R</kbd> Recommencer</span>
+    </footer>
+
+    <div id="overlay" class="hidden">
+      <div class="panel">
+        <h2 id="overlay-title">Mow &amp; Go</h2>
+        <p id="overlay-text"></p>
+        <button id="overlay-btn">Jouer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
