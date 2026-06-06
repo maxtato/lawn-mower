@@ -131,6 +131,92 @@ document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; }
 
 el.overlayBtn.addEventListener("click", reset);
 
+// ------------------------------------------------------------
+//  Joystick virtuel tactile (mobile / iPhone)
+// ------------------------------------------------------------
+const joyEl = document.getElementById("joystick");
+const knobEl = document.getElementById("joy-knob");
+const joy = {
+  active: false,
+  id: null,      // identifiant du toucher suivi
+  baseX: 0,
+  baseY: 0,
+  dx: 0,
+  dy: 0,
+  mag: 0,        // 0..1 (vitesse analogique)
+  maxR: 50       // amplitude max du knob en px
+};
+
+// Affiche le joystick si l'appareil est tactile
+const isTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+if (isTouch) {
+  document.body.classList.add("touch");
+  joyEl.classList.add("visible");
+}
+
+function joyStart(clientX, clientY, id) {
+  const rect = joyEl.getBoundingClientRect();
+  joy.baseX = rect.left + rect.width / 2;
+  joy.baseY = rect.top + rect.height / 2;
+  joy.id = id;
+  joy.active = true;
+  joyMove(clientX, clientY);
+}
+
+function joyMove(clientX, clientY) {
+  if (!joy.active) return;
+  let dx = clientX - joy.baseX;
+  let dy = clientY - joy.baseY;
+  const dist = Math.hypot(dx, dy);
+  if (dist > joy.maxR) { dx = (dx / dist) * joy.maxR; dy = (dy / dist) * joy.maxR; }
+  joy.dx = dx;
+  joy.dy = dy;
+  joy.mag = Math.min(1, dist / joy.maxR);
+  knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
+function joyEnd() {
+  joy.active = false;
+  joy.id = null;
+  joy.dx = joy.dy = joy.mag = 0;
+  knobEl.style.transform = "translate(0px, 0px)";
+}
+
+// Touch events (mobile)
+joyEl.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joyStart(t.clientX, t.clientY, t.identifier);
+}, { passive: false });
+
+window.addEventListener("touchmove", (e) => {
+  if (!joy.active) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) {
+      e.preventDefault();
+      joyMove(t.clientX, t.clientY);
+      break;
+    }
+  }
+}, { passive: false });
+
+window.addEventListener("touchend", (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { joyEnd(); break; }
+  }
+});
+window.addEventListener("touchcancel", joyEnd);
+
+// Mouse events (test sur ordinateur)
+joyEl.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  joyStart(e.clientX, e.clientY, "mouse");
+});
+window.addEventListener("mousemove", (e) => {
+  if (joy.active && joy.id === "mouse") joyMove(e.clientX, e.clientY);
+});
+window.addEventListener("mouseup", () => { if (joy.id === "mouse") joyEnd(); });
+
 function dirFromKeys() {
   let dx = 0, dy = 0;
   if (keys["arrowup"] || keys["z"] || keys["w"]) dy -= 1;
@@ -138,6 +224,21 @@ function dirFromKeys() {
   if (keys["arrowleft"] || keys["q"] || keys["a"]) dx -= 1;
   if (keys["arrowright"] || keys["d"]) dx += 1;
   return { dx, dy };
+}
+
+// Vecteur d'entrée unifié : joystick (analogique, 360°) prioritaire, sinon clavier.
+// Renvoie une direction normalisée + une magnitude 0..1 (vitesse).
+function getInputVector() {
+  if (joy.active && joy.mag > 0.08) {
+    const len = Math.hypot(joy.dx, joy.dy) || 1;
+    return { dx: joy.dx / len, dy: joy.dy / len, mag: joy.mag, active: true };
+  }
+  const { dx, dy } = dirFromKeys();
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.hypot(dx, dy);
+    return { dx: dx / len, dy: dy / len, mag: 1, active: true };
+  }
+  return { dx: 0, dy: 0, mag: 0, active: false };
 }
 
 // ------------------------------------------------------------
@@ -168,12 +269,16 @@ function update(dt) {
 
   elapsed = (performance.now() - startTime) / 1000;
 
-  const { dx, dy } = dirFromKeys();
-  const moving = dx !== 0 || dy !== 0;
+  const inp = getInputVector();
 
-  if (moving) {
-    mower.angle = Math.atan2(dy, dx);
-    mower.speed = Math.min(mower.maxSpeed, mower.speed + mower.accel * dt);
+  if (inp.active) {
+    mower.angle = Math.atan2(inp.dy, inp.dx);
+    const target = mower.maxSpeed * inp.mag; // vitesse proportionnelle au joystick
+    if (mower.speed < target) {
+      mower.speed = Math.min(target, mower.speed + mower.accel * dt);
+    } else {
+      mower.speed = Math.max(target, mower.speed - mower.friction * dt);
+    }
   } else {
     mower.speed = Math.max(0, mower.speed - mower.friction * dt);
   }

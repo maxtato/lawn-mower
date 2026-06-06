@@ -2,7 +2,9 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Mow &amp; Go 🚜</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -34,10 +36,18 @@
       </div>
     </header>
 
-    <canvas id="game" width="800" height="600"></canvas>
+    <div id="stage">
+      <canvas id="game" width="800" height="600"></canvas>
+
+      <!-- Joystick virtuel tactile (mobile) -->
+      <div id="joystick" aria-hidden="true">
+        <div id="joy-knob"></div>
+      </div>
+    </div>
 
     <footer id="controls">
-      <span>Déplacer&nbsp;: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd></span>
+      <span class="desktop-only">Déplacer&nbsp;: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd></span>
+      <span class="touch-only">🕹️ Glisse le joystick pour conduire</span>
       <span><kbd>R</kbd> Recommencer</span>
     </footer>
 
