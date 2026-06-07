@@ -188,15 +188,14 @@ function addCanopy(s) { noMow.push(s); }            // sous les arbres : non ton
 function buildDecor() {
   const g = decorCtx;
 
-  // ----- Zones pavées -----
-  const terrace = R(820, 130, 320, 280);
+  // ----- Zones pavées (carrossables) -----
+  const terrace = R(820, 130, 320, 280);          // 820..1140 / 130..410
   const drive = R(1545, 560, 195, WORLD_H - 44 - 560);
-  const path = R(1190, 430, 130, 110);
-  for (const p of [terrace, drive, path]) { addPaved(p); drawPaved(g, p); }
+  for (const p of [terrace, drive]) { addPaved(p); drawPaved(g, p); }
 
-  // ----- Maison + garage (toits vus de dessus) -----
-  const house = R(1180, 70, 575, 360);
-  const garage = R(1520, 430, 235, 150);
+  // ----- Maison + garage (TOITS vus de dessus) -----
+  const house = R(1180, 70, 575, 360);            // 1180..1755 / 70..430
+  const garage = R(1520, 430, 235, 150);          // 1520..1755 / 430..580
   addSolid(house); addSolid(garage);
   drawRoof(g, garage, "#9a6b40", "#b07f4f", "#7c5430", false);
   drawRoof(g, house, "#b14534", "#cb5a45", "#8f3527", true);
@@ -210,63 +209,124 @@ function buildDecor() {
   const hedge = R(1470, 640, 44, 600);
   addSolid(hedge); drawHedge(g, hedge);
 
-  // ----- Mare -----
-  const pond = E(560, 1010, 195, 130);
-  addSolid(pond);
-  drawPond(g, pond);
+  // ----- Mare + potager -----
+  const pond = E(520, 1010, 195, 130);            // 325..715 / 880..1140
+  addSolid(pond); drawPond(g, pond);
+  const veg = R(110, 1070, 200, 220);             // 110..310 / 1070..1290
+  addBed(veg); drawVeggie(g, veg);
 
-  // ----- Potager -----
-  const veg = R(120, 1060, 270, 230);
-  addBed(veg);
-  drawVeggie(g, veg);
-
-  // ----- Massifs de fleurs (variés) -----
+  // ----- Massifs de fleurs (sur la pelouse, jamais sur le bâti) -----
   const flowerBeds = [
-    R(520, 60, 620, 92),     // bande haute
-    R(60, 360, 150, 560),    // plate-bande gauche
-    R(700, 430, 120, 110),   // près de la terrasse
-    R(1320, 440, 220, 130),  // devant la maison
-    R(900, 1090, 300, 210)   // bas-centre
+    R(420, 60, 380, 90),     // bande haute (entre l'arbre et la terrasse)
+    R(60, 450, 150, 450),    // plate-bande gauche
+    R(700, 430, 110, 100),   // à gauche de la terrasse
+    R(1180, 470, 300, 90),   // devant la maison (au-dessus du garage)
+    R(1180, 1120, 260, 180)  // bas-centre
   ];
   for (const b of flowerBeds) { addBed(b); drawFlowerBed(g, b); }
 
-  // ----- Arbres variés (canopée = non tondable, tronc = solide) -----
+  // ----- Arbres variés (canopée = non tondable, base = solide) -----
   const trees = [
-    { type: "oak", x: 250, y: 260, r: 150 },
-    { type: "oak", x: 980, y: 1170, r: 140 },
+    { type: "oak", x: 230, y: 250, r: 140 },
+    { type: "oak", x: 1000, y: 1180, r: 140 },
     { type: "pine", x: 430, y: 660, r: 120 },
-    { type: "pine", x: 1410, y: 1180, r: 115 },
+    { type: "pine", x: 1350, y: 920, r: 105 },
     { type: "birch", x: 810, y: 760, r: 95 },
-    { type: "round", x: 1180, y: 900, r: 85 }
+    { type: "round", x: 1140, y: 880, r: 80 }
   ];
   for (const t of trees) {
     addCanopy(C(t.x, t.y, t.r));
-    addSolid(C(t.x, t.y, Math.max(26, t.r * 0.34))); // tronc/base
+    addSolid(C(t.x, t.y, Math.max(22, t.r * 0.28))); // base / tronc
   }
-  // (dessinés après les massifs pour passer devant)
   for (const t of trees) drawTree(g, t);
 
-  // ----- Banc, rochers, pots -----
-  const bench = R(540, 1180, 170, 46);
+  // ----- Mobilier de jardin -----
+  const bench = R(540, 1170, 170, 46);
   addSolid(bench); drawBench(g, bench);
-
-  for (const [x, y, r] of [[720, 560, 30], [905, 640, 24]]) {
-    addSolid(C(x, y, r)); drawRock(g, x, y, r);
-  }
-  for (const [x, y] of [[800, 150], [1130, 150]]) {
-    addSolid(C(x, y, 22)); drawPot(g, x, y);
-  }
-
-  // ----- Vasque à oiseaux près de la mare -----
+  for (const [x, y, r] of [[640, 470, 28], [960, 600, 24]]) { addSolid(C(x, y, r)); drawRock(g, x, y, r); }
+  for (const [x, y] of [[850, 160], [1110, 160]]) { addSolid(C(x, y, 22)); drawPot(g, x, y); }
   addSolid(C(830, 1010, 19)); drawBirdbath(g, 830, 1010);
 
-  // ----- Arbustes ornementaux isolés -----
-  for (const [x, y, r] of [[1150, 660, 18], [690, 990, 16], [330, 430, 17], [1240, 1140, 16]]) {
+  // ----- Arbustes ornementaux (couleurs contrastées) -----
+  for (const [x, y, r] of [[240, 560, 18], [920, 460, 18], [1130, 660, 20], [1290, 640, 18]]) {
     addSolid(C(x, y, r * 0.7)); drawShrub(g, x, y, r);
   }
 
+  // ----- Objets à éviter pendant la tonte -----
+  const objects = [
+    { t: "ball", x: 650, y: 720, r: 16 },
+    { t: "ball", x: 1300, y: 700, r: 16 },
+    { t: "rake", x: 560, y: 620, r: 16 },
+    { t: "rake", x: 770, y: 1000, r: 16 },
+    { t: "can", x: 930, y: 520, r: 15 },
+    { t: "bucket", x: 1130, y: 720, r: 15 },
+    { t: "barrow", x: 470, y: 860, r: 24 },
+    { t: "gnome", x: 480, y: 520, r: 13 }
+  ];
+  for (const o of objects) { addSolid(C(o.x, o.y, o.r * 0.8)); drawObject(g, o); }
+
   // ----- Clôture sur tout le pourtour -----
   drawFence(g);
+}
+
+function drawObject(g, o) {
+  // ombre commune
+  g.fillStyle = "rgba(0,0,0,0.18)";
+  g.beginPath(); g.ellipse(o.x + 2, o.y + 3, o.r, o.r * 0.7, 0, 0, Math.PI * 2); g.fill();
+  if (o.t === "ball") drawSoccer(g, o.x, o.y, o.r);
+  else if (o.t === "rake") drawRake(g, o.x, o.y);
+  else if (o.t === "can") drawWateringCan(g, o.x, o.y);
+  else if (o.t === "bucket") drawBucket(g, o.x, o.y);
+  else if (o.t === "barrow") drawWheelbarrow(g, o.x, o.y);
+  else if (o.t === "gnome") drawGnome(g, o.x, o.y);
+}
+
+function drawSoccer(g, x, y, r) {
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#1a1a1a";
+  g.beginPath(); g.arc(x, y, r * 0.34, 0, Math.PI * 2); g.fill(); // pentagone central
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    g.beginPath(); g.arc(x + Math.cos(a) * r * 0.66, y + Math.sin(a) * r * 0.66, r * 0.16, 0, Math.PI * 2); g.fill();
+  }
+  g.strokeStyle = "#888"; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+}
+function drawRake(g, x, y) {
+  g.save(); g.translate(x, y); g.rotate(-0.6);
+  g.strokeStyle = "#8a5a32"; g.lineWidth = 5; // manche
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(0, 34); g.stroke();
+  g.strokeStyle = "#cfd3d8"; g.lineWidth = 4; // tête
+  g.beginPath(); g.moveTo(-16, -2); g.lineTo(16, -2); g.stroke();
+  g.lineWidth = 2;
+  for (let i = -16; i <= 16; i += 5) { g.beginPath(); g.moveTo(i, -2); g.lineTo(i, -12); g.stroke(); }
+  g.restore();
+}
+function drawWateringCan(g, x, y) {
+  g.fillStyle = "#2e8b57";
+  roundRectPath(g, x - 13, y - 10, 22, 22, 5); g.fill();   // corps
+  g.fillRect(x + 7, y - 6, 14, 5);                          // bec
+  g.fillStyle = "#bfead0"; g.beginPath(); g.arc(x + 22, y - 4, 4, 0, Math.PI * 2); g.fill(); // pomme
+  g.strokeStyle = "#236b43"; g.lineWidth = 3;               // anse
+  g.beginPath(); g.arc(x - 2, y - 12, 8, Math.PI, 0); g.stroke();
+}
+function drawBucket(g, x, y) {
+  g.fillStyle = "#3f7fd0"; g.beginPath(); g.arc(x, y, 14, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#2c5fa0"; g.beginPath(); g.arc(x, y, 10, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "#9bb8e0"; g.lineWidth = 3; g.beginPath(); g.arc(x, y, 16, -0.3, Math.PI + 0.3); g.stroke();
+}
+function drawWheelbarrow(g, x, y) {
+  g.fillStyle = "#c44a2e"; roundRectPath(g, x - 22, y - 16, 44, 30, 6); g.fill(); // bac
+  g.fillStyle = "#9a3a22"; roundRectPath(g, x - 18, y - 12, 36, 22, 5); g.fill();
+  g.fillStyle = "#444"; g.beginPath(); g.arc(x - 14, y + 18, 9, 0, Math.PI * 2); g.fill(); // roue
+  g.fillStyle = "#888"; g.beginPath(); g.arc(x - 14, y + 18, 3, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "#8a5a32"; g.lineWidth = 4;
+  g.beginPath(); g.moveTo(x + 18, y - 6); g.lineTo(x + 30, y + 16); g.stroke(); // poignée
+}
+function drawGnome(g, x, y) {
+  g.fillStyle = "#3f7fd0"; g.beginPath(); g.arc(x, y + 4, 9, 0, Math.PI * 2); g.fill(); // corps
+  g.fillStyle = "#f2cda0"; g.beginPath(); g.arc(x, y - 2, 6, 0, Math.PI * 2); g.fill(); // visage
+  g.fillStyle = "#d33"; g.beginPath(); g.moveTo(x - 9, y - 2); g.lineTo(x + 9, y - 2); g.lineTo(x, y - 18); g.closePath(); g.fill(); // bonnet
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(x, y + 2, 4, 0, Math.PI); g.fill(); // barbe
 }
 
 // ------------------------------------------------------------
@@ -403,13 +463,21 @@ function drawFlower(g, x, y, color, s) {
   g.fillStyle = "#ffd23f";
   g.beginPath(); g.arc(x, y, 2.1 * s, 0, Math.PI * 2); g.fill();
 }
+// Buisson aux couleurs contrastées avec la pelouse (vert bleuté foncé +
+// reflets menthe), pour être bien visible et facile à éviter.
 function drawShrub(g, x, y, r) {
-  g.fillStyle = "#2f7d2c";
-  for (const [dx, dy, rr] of [[0, 0, r], [-r * 0.6, r * 0.2, r * 0.7], [r * 0.6, r * 0.2, r * 0.7]]) {
+  g.fillStyle = "rgba(0,0,0,0.18)";
+  g.beginPath(); g.ellipse(x + 2, y + 3, r, r * 0.8, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#14543a"; // base foncée
+  for (const [dx, dy, rr] of [[0, 0, r], [-r * 0.6, r * 0.2, r * 0.7], [r * 0.6, r * 0.2, r * 0.7], [0, -r * 0.5, r * 0.6]]) {
     g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill();
   }
-  g.fillStyle = "rgba(120,200,90,0.35)";
-  g.beginPath(); g.arc(x - r * 0.2, y - r * 0.3, r * 0.5, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#1f7d56"; // teinte médiane (teal)
+  for (const [dx, dy, rr] of [[0, 0, r * 0.7], [-r * 0.4, r * 0.1, r * 0.45], [r * 0.4, r * 0.1, r * 0.45]]) {
+    g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = "rgba(120,230,170,0.6)"; // reflet menthe
+  g.beginPath(); g.arc(x - r * 0.25, y - r * 0.3, r * 0.4, 0, Math.PI * 2); g.fill();
 }
 function drawFlowerBed(g, b) {
   // terre
@@ -426,33 +494,54 @@ function drawFlowerBed(g, b) {
   }
 }
 
+// Arbre vu STRICTEMENT de dessus : couronne ronde concentrique, pas de tronc
+// qui « descend ». Couleurs sombres pour bien trancher avec la pelouse.
 function drawTree(g, t) {
   const { x, y, r, type } = t;
-  // ombre portée
-  g.fillStyle = "rgba(0,0,0,0.18)";
-  g.beginPath(); g.ellipse(x + r * 0.18, y + r * 0.22, r * 0.95, r * 0.6, 0, 0, Math.PI * 2); g.fill();
+  // ombre portée (légèrement décalée)
+  g.fillStyle = "rgba(0,0,0,0.20)";
+  g.beginPath(); g.ellipse(x + r * 0.14, y + r * 0.16, r, r * 0.92, 0, 0, Math.PI * 2); g.fill();
+
+  const rnd = mulberry32(Math.floor(x * 7 + y));
+  let cDark, cMid, cLight;
+  if (type === "pine") { cDark = "#11401d"; cMid = "#1c5a2a"; cLight = "#2f7d3a"; }
+  else if (type === "birch") { cDark = "#4f8a2a"; cMid = "#6fb33a"; cLight = "#9bd86a"; }
+  else if (type === "oak") { cDark = "#1d5e22"; cMid = "#2c7a2c"; cLight = "#4aa83f"; }
+  else { cDark = "#246b2e"; cMid = "#359442"; cLight = "#5cc057"; }
+
+  // disque de base (bord foncé pour le contraste)
+  g.fillStyle = cDark;
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+
   if (type === "pine") {
-    g.fillStyle = "#6b4a2a"; g.fillRect(x - 8, y, 16, r * 0.5);
-    for (let i = 0; i < 3; i++) {
-      const yy = y - r * 0.7 + i * r * 0.45, w = r * (0.9 - i * 0.22);
-      g.fillStyle = i === 0 ? "#1f5a1e" : "#256b23";
-      g.beginPath(); g.moveTo(x, yy - r * 0.5); g.lineTo(x - w, yy + r * 0.2); g.lineTo(x + w, yy + r * 0.2); g.closePath(); g.fill();
+    // couronne d'aiguilles en couronnes concentriques + pointes radiales
+    g.fillStyle = cMid; g.beginPath(); g.arc(x, y, r * 0.74, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = cDark; g.lineWidth = 2;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      g.beginPath(); g.moveTo(x + Math.cos(a) * r * 0.2, y + Math.sin(a) * r * 0.2);
+      g.lineTo(x + Math.cos(a) * r * 0.95, y + Math.sin(a) * r * 0.95); g.stroke();
     }
-  } else if (type === "birch") {
-    g.fillStyle = "#e8e8e0"; g.fillRect(x - 6, y - r * 0.1, 12, r * 0.8);
-    g.fillStyle = "#444"; for (let i = 0; i < 4; i++) g.fillRect(x - 6, y + i * (r * 0.18), 12, 2);
-    g.fillStyle = "#7cbf3f";
-    for (const [dx, dy, rr] of [[0, -r * 0.4, r * 0.6], [-r * 0.4, -r * 0.1, r * 0.45], [r * 0.4, -r * 0.15, r * 0.45]]) {
-      g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill();
-    }
-  } else { // chêne / arbre rond touffu
-    g.fillStyle = "#5a3a1e"; g.fillRect(x - 10, y, 20, r * 0.4);
-    const base = type === "oak" ? "#2f7d2c" : "#3f9b3a";
-    const clusters = [[0, -r * 0.25, r * 0.7], [-r * 0.55, 0, r * 0.55], [r * 0.55, 0, r * 0.55], [-r * 0.25, -r * 0.6, r * 0.5], [r * 0.3, -r * 0.55, r * 0.5]];
-    g.fillStyle = base;
-    for (const [dx, dy, rr] of clusters) { g.beginPath(); g.arc(x + dx, y + dy, rr, 0, Math.PI * 2); g.fill(); }
-    g.fillStyle = "rgba(150,210,90,0.30)";
-    for (const [dx, dy, rr] of clusters) { g.beginPath(); g.arc(x + dx - rr * 0.25, y + dy - rr * 0.3, rr * 0.55, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = cLight; g.beginPath(); g.arc(x, y, r * 0.34, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#5a3a1e"; g.beginPath(); g.arc(x, y, r * 0.1, 0, Math.PI * 2); g.fill();
+  } else {
+    // feuillu : amas de feuillage en bouquets, du foncé (bord) au clair (centre)
+    const ring = (rad, col, count, size) => {
+      g.fillStyle = col;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rnd() * 0.4;
+        const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+        g.beginPath(); g.arc(px, py, size, 0, Math.PI * 2); g.fill();
+      }
+    };
+    ring(r * 0.66, cDark, 11, r * 0.30);
+    ring(r * 0.5, cMid, 9, r * 0.30);
+    ring(r * 0.24, cLight, 6, r * 0.26);
+    g.fillStyle = cLight; g.beginPath(); g.arc(x, y, r * 0.22, 0, Math.PI * 2); g.fill();
+    // quelques reflets
+    g.fillStyle = "rgba(255,255,255,0.12)";
+    for (let i = 0; i < 6; i++) { const a = rnd() * Math.PI * 2, rad = rnd() * r * 0.7; g.beginPath(); g.arc(x + Math.cos(a) * rad, y + Math.sin(a) * rad, r * 0.1, 0, Math.PI * 2); g.fill(); }
+    if (type === "birch") { g.fillStyle = "#eef0e6"; g.beginPath(); g.arc(x, y, r * 0.08, 0, Math.PI * 2); g.fill(); }
   }
 }
 
@@ -512,7 +601,7 @@ function buildCoverage() {
 function makeMower() {
   return {
     x: 640, y: 560, angle: 0, speed: 0,
-    maxSpeed: 190, accel: 750, friction: 650,
+    maxSpeed: 95, accel: 480, friction: 430,  // tondeuse lente et posée
     radius: 17, health: 100
   };
 }
@@ -687,7 +776,7 @@ function update(dt) {
   if (!hitsSolid(mower.x, mower.y + vy * dt, mower.radius)) mower.y += vy * dt; else hitWall = true;
 
   if (damageCooldown > 0) damageCooldown -= dt;
-  if (hitWall && mower.speed > 120 && damageCooldown <= 0) {
+  if (hitWall && mower.speed > 70 && damageCooldown <= 0) {
     const dmg = Math.round(3 + (mower.speed / mower.maxSpeed) * 6);
     mower.health = Math.max(0, mower.health - dmg);
     score = Math.max(0, score - 5);
@@ -777,7 +866,7 @@ function endGame(won) {
   state = won ? "won" : "lost";
   let stars = "";
   if (won) {
-    let s = 1; if (flowersDestroyed === 0) s++; if (elapsed < 90) s++;
+    let s = 1; if (flowersDestroyed === 0) s++; if (elapsed < 150) s++;
     stars = "⭐".repeat(s) + "☆".repeat(3 - s);
   }
   showOverlay(
